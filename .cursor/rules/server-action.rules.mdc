@@ -1,0 +1,102 @@
+## Server Action
+
+All server actions (e.g., form submission, DB updates) are defined in a separate file (e.g., `@/domains/{domain_name}/actions/{TYPE}.action.ts`)) in the same domain as the page. TYPE should be one of these: submit, fetch, update, category, star, etc.
+Server action must be used at page server components or UI client components.
+Use zod schema (`@/domains/{domain_name}/schemas/{TYPE}.schema.ts`) to validate data before send it to database.
+Use `@/db/index.ts/createDrizzleSupabaseClient()` for db public schema, `createClient` for auth schema connection. The `createDrizzleSupabaseClient` is special custom client for drizzle-supabase client with rls connection, ONLY USE THIS CLIENT FOR PROPER CONNECTION.
+
+## Drizzle ORM Usage at server action.
+
+Drizzle RLS Client always be used at server action, `{TYPE}.action.ts`.
+Use the Drizzle RLS Client `@/db/index.ts/createDrizzleSupabaseClient()` for all queries to the public schema of supabase table.
+This pattern ensures that RLS policies are enforced and that you have access to the current user's identity for inserts/updates based on rls policies.
+
+```ts
+  // @/domains/**/action.ts
+  "use server"
+
+  export async function getResult(userId: string) {
+    // Use Drizzle RLS client for public schema data
+    const db = await createDrizzleSupabaseClient();
+    const result = await db.rls((tx) =>
+      tx.select().from(profiles).where(eq(profiles.user_id, user.id))
+    );
+    return result
+  }
+  // ...
+}
+```
+
+```ts
+// @/db/index.ts
+type SupabaseToken = {
+  iss?: string;
+  sub?: string;
+  aud?: string[] | string;
+  exp?: number;
+  nbf?: number;
+  iat?: number;
+  jti?: string;
+  role?: string;
+};
+
+export function createDrizzle(
+  token: SupabaseToken,
+  { admin, client }: { admin: PgDatabase<any>; client: PgDatabase<any> }
+) {
+  return {
+    admin,
+    rls: (async (transaction, ...rest) => {
+      return await client.transaction(async (tx) => {
+        // Supabase exposes auth.uid() and auth.jwt()
+        // https://supabase.com/docs/guides/database/postgres/row-level-security#helper-functions
+        try {
+          await tx.execute(sql`
+          -- auth.jwt()
+          select set_config('request.jwt.claims', '${sql.raw(
+            JSON.stringify(token)
+          )}', TRUE);
+          -- auth.uid()
+          select set_config('request.jwt.claim.sub', '${sql.raw(
+            token.sub ?? ""
+          )}', TRUE);												
+          -- set local role
+          set local role ${sql.raw(token.role ?? "anon")};
+          `);
+          return await transaction(tx);
+        } finally {
+          await tx.execute(sql`
+            -- reset
+            select set_config('request.jwt.claims', NULL, TRUE);
+            select set_config('request.jwt.claim.sub', NULL, TRUE);
+            reset role;
+            `);
+        }
+      }, ...rest);
+    }) as typeof client.transaction,
+  };
+}
+
+function decode(token: string): SupabaseToken {
+  if (!token) return {};
+  const parts = token.split(".");
+  if (parts.length !== 3) return {};
+  try {
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = Buffer.from(payload, "base64").toString();
+    return JSON.parse(decoded);
+  } catch {
+    return {};
+  }
+}
+
+export async function createDrizzleSupabaseClient() {
+  const {
+    data: { session },
+  } = await (await createClient()).auth.getSession();
+  return createDrizzle(decode(session?.access_token ?? ""), {
+    admin: adminDb,
+    client: rlsDb,
+  });
+}
+```

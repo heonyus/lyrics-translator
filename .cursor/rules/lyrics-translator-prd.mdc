@@ -1,0 +1,366 @@
+# 🎤 Karaoke-Style Lyrics Translator System PRD
+
+## 1. 프로젝트 개요
+
+- **프로젝트 명**: 실시간 가라오케 가사 번역 시스템
+- **목표**: 노래 방송 시 가사를 단어별로 하이라이팅하며 표시하고, 외국인 시청자를 위해 실시간 번역된 자막을 함께 제공하는 OBS 호환 오버레이 시스템 구축
+- **핵심 기술 스택**: Next.js 15, TypeScript, Framer Motion, Google Translate API, LRC Parser
+
+## 2. 핵심 기능 (Features)
+
+- **가라오케 스타일 가사 표시**:
+  - LRC 파일 기반 단어별 타이밍 지원
+  - 부드러운 하이라이팅 애니메이션
+  - 진행률 표시 및 다음 가사 미리보기
+  - 커스터마이징 가능한 폰트, 색상, 크기
+
+- **실시간 번역 시스템**:
+  - Google Translate API 통합
+  - 다국어 동시 지원 (최대 3개 언어)
+  - 번역 결과 캐싱으로 성능 최적화
+  - 언어별 개별 설정 가능
+
+- **동기화 및 타이밍**:
+  - 오디오 재생과 가사 동기화
+  - 수동 타이밍 조정 기능 (+/- 오프셋)
+  - 실시간 보정 및 미세 조정
+  - BPM 기반 자동 동기화 옵션
+
+- **OBS 통합**:
+  - 투명 배경 지원 (chroma key 불필요)
+  - 브라우저 소스로 직접 사용 가능
+  - URL 파라미터를 통한 설정 제어
+  - 다양한 해상도 지원 (720p, 1080p, 4K)
+
+- **방송자 컨트롤 패널**:
+  - 실시간 미리보기
+  - 가사 파일 업로드 및 관리
+  - 번역 언어 선택 및 순서 설정
+  - 디스플레이 설정 (위치, 크기, 스타일)
+
+## 3. IA (페이지 구조도)
+
+- **메인 오버레이 (`/overlay`)**:
+  - 가라오케 가사 디스플레이
+  - 번역 자막 표시
+  - 투명 배경 렌더링
+
+- **컨트롤 패널 (`/control`)**:
+  - 가사 파일 관리
+  - 실시간 미리보기
+  - 설정 조정 인터페이스
+
+- **에디터 (`/editor`)**:
+  - LRC 파일 생성/편집
+  - 단어별 타이밍 설정
+  - 동기화 도구
+
+## 4. 도메인 설계
+
+`src/domains/` 기준으로 구성
+
+- `lyrics`: LRC 파일 파싱, 가사 데이터 관리
+- `karaoke`: 단어별 하이라이팅, 애니메이션 렌더링
+- `translation`: 실시간 번역 처리, 캐싱
+- `sync`: 오디오/비디오 동기화, 타이밍 관리
+- `overlay`: OBS 호환 UI 렌더링, 투명도 처리
+- `ui`: 사용자 인터페이스 컴포넌트
+- `settings`: 사용자 설정 저장 및 관리
+
+## 5. 주요 로직 (수도코드)
+
+```pseudocode
+// 가라오케 렌더링 메인 로직
+function KaraokeRenderer(lrcData, currentTime, translationSettings) {
+  // 현재 시간에 해당하는 라인과 단어 찾기
+  currentLine = findCurrentLine(lrcData, currentTime)
+  currentWord = findCurrentWord(currentLine, currentTime)
+  
+  // 가라오케 스타일 렌더링
+  renderKaraokeLine(currentLine, {
+    highlightedWords: getHighlightedWords(currentLine, currentWord),
+    animation: 'smooth-fill',
+    progress: calculateProgress(currentWord)
+  })
+  
+  // 번역 처리
+  if (translationSettings.enabled) {
+    translations = await translateLine(currentLine.text, translationSettings.languages)
+    renderTranslations(translations, translationSettings.position)
+  }
+  
+  // 다음 라인 미리보기
+  if (settings.showNextLine) {
+    nextLine = findNextLine(lrcData, currentTime)
+    renderPreview(nextLine)
+  }
+}
+
+// LRC 파일 파싱 (단어 레벨 타이밍 포함)
+function parseLRCWithWordTiming(lrcContent) {
+  lines = []
+  
+  for (line of lrcContent.split('\n')) {
+    if (line.match(/\[(\d+):(\d+\.\d+)\]/)) {
+      timestamp = parseTimestamp(line)
+      text = extractText(line)
+      
+      // 단어별 타이밍 파싱 (확장 LRC 형식)
+      // [00:12.50]<00:12.50>Hello <00:13.20>world <00:13.80>
+      words = parseWordTimings(text)
+      
+      lines.push({
+        timestamp,
+        text: cleanText(text),
+        words,
+        duration: calculateLineDuration(words)
+      })
+    }
+  }
+  
+  return lines
+}
+
+// 실시간 번역 처리
+async function translateWithCache(text, targetLanguages) {
+  translations = {}
+  
+  for (lang of targetLanguages) {
+    // 캐시 확인
+    cacheKey = `${text}_${lang}`
+    if (cache.has(cacheKey)) {
+      translations[lang] = cache.get(cacheKey)
+      continue
+    }
+    
+    // 번역 API 호출
+    translated = await googleTranslate.translate(text, {
+      from: 'ko',
+      to: lang
+    })
+    
+    // 캐시 저장
+    cache.set(cacheKey, translated)
+    translations[lang] = translated
+  }
+  
+  return translations
+}
+
+// OBS 오버레이 렌더링
+function OBSOverlay({ config }) {
+  return (
+    <div style={{
+      background: 'transparent',
+      width: config.width,
+      height: config.height
+    }}>
+      <KaraokeDisplay 
+        position={config.karaokePosition}
+        style={config.karaokeStyle}
+      />
+      
+      <TranslationDisplay
+        position={config.translationPosition}
+        style={config.translationStyle}
+        languages={config.languages}
+      />
+    </div>
+  )
+}
+```
+
+## 6. 데이터 구조
+
+### LRC 파일 형식 (확장)
+```
+[ti:Song Title]
+[ar:Artist Name]
+[al:Album Name]
+[by:Creator]
+
+[00:12.50]<00:12.50>안녕하세요 <00:13.20>여러분 <00:13.80>
+[00:14.30]<00:14.30>오늘은 <00:14.80>즐거운 <00:15.40>하루 <00:16.00>
+```
+
+### 설정 데이터
+```json
+{
+  "karaokeSettings": {
+    "font": {
+      "family": "Noto Sans KR",
+      "size": 48,
+      "weight": "bold"
+    },
+    "colors": {
+      "text": "#FFFFFF",
+      "highlighted": "#FFD700",
+      "shadow": "#000000"
+    },
+    "animation": {
+      "type": "smooth-fill",
+      "duration": 300
+    },
+    "position": {
+      "x": "center",
+      "y": 80  // % from top
+    }
+  },
+  "translationSettings": {
+    "enabled": true,
+    "languages": ["en", "ja", "zh"],
+    "position": {
+      "x": "center", 
+      "y": 90  // % from top
+    },
+    "style": {
+      "fontSize": 32,
+      "backgroundColor": "rgba(0,0,0,0.7)",
+      "textColor": "#FFFFFF"
+    }
+  },
+  "syncSettings": {
+    "offset": 0,  // milliseconds
+    "autoSync": false
+  }
+}
+```
+
+## 7. 유저 플로우
+
+```mermaid
+graph TD
+    A[방송 시작] --> B[LRC 파일 업로드]
+    B --> C[번역 언어 선택]
+    C --> D[스타일 설정]
+    D --> E[OBS에 브라우저 소스 추가]
+    E --> F[오버레이 URL 입력]
+    F --> G[노래 재생 시작]
+    G --> H[가사 단어별 하이라이팅]
+    H --> I[실시간 번역 표시]
+    I --> J{다음 라인?}
+    J -->|Yes| H
+    J -->|No| K[방송 종료]
+    
+    subgraph "실시간 처리"
+        L[현재 시간 추적]
+        M[단어 하이라이팅 계산]
+        N[번역 API 호출]
+        O[캐시 확인/저장]
+        P[렌더링 업데이트]
+    end
+    
+    G --> L
+    L --> M
+    M --> N
+    N --> O
+    O --> P
+    P --> H
+```
+
+## 8. 시스템 아키텍처
+
+```mermaid
+graph TB
+  subgraph "Frontend (Next.js)"
+    A[Overlay Page] --> B[Karaoke Component]
+    A --> C[Translation Component]
+    D[Control Panel] --> E[Settings Manager]
+    D --> F[File Manager]
+  end
+  
+  subgraph "Core Domains"
+    G[Lyrics Domain] --> H[LRC Parser]
+    I[Karaoke Domain] --> J[Timing Engine]
+    K[Translation Domain] --> L[Cache Manager]
+  end
+  
+  subgraph "External"
+    M[Google Translate API]
+    N[Local Storage]
+    O[OBS Browser Source]
+  end
+  
+  B --> J
+  C --> L
+  L --> M
+  E --> N
+  A --> O
+```
+
+## 9. 성능 최적화 전략
+
+### 🚀 렌더링 최적화
+- React.memo를 활용한 불필요한 리렌더링 방지
+- 가상 스크롤링으로 긴 가사 파일 처리
+- requestAnimationFrame을 활용한 부드러운 애니메이션
+
+### 💾 캐싱 전략
+- 번역 결과 로컬 캐싱 (IndexedDB)
+- LRC 파싱 결과 메모리 캐싱
+- 자주 사용하는 설정 프리셋 저장
+
+### ⚡ 실시간 처리
+- Web Workers를 활용한 백그라운드 번역
+- 디바운싱으로 과도한 API 호출 방지
+- 예측 로딩으로 다음 가사 미리 번역
+
+## 10. 접근성 및 사용성
+
+### ♿ 접근성
+- 고대비 모드 지원
+- 폰트 크기 조절 기능
+- 색맹 친화적 컬러 옵션
+- 키보드 단축키 지원
+
+### 🎨 커스터마이징
+- 다양한 테마 프리셋
+- 커스텀 CSS 지원
+- 폰트 업로드 기능
+- 애니메이션 스타일 선택
+
+### 🌐 다국어 지원
+- UI 다국어 지원
+- RTL 언어 대응
+- 언어별 폰트 최적화
+- 문자 인코딩 자동 감지
+
+## 11. 보안 및 프라이버시
+
+### 🔒 보안
+- API 키 환경 변수 관리
+- CORS 설정으로 도메인 제한
+- 입력 검증 및 sanitization
+- Rate limiting 구현
+
+### 🔐 프라이버시
+- 가사 파일 로컬 처리
+- 번역 내용 임시 저장 옵션
+- 사용자 데이터 암호화
+- 자동 데이터 정리 기능
+
+## 12. 향후 확장 계획
+
+### 📱 모바일 지원
+- 모바일 웹 최적화
+- 터치 제스처 지원
+- 반응형 디자인 강화
+
+### 🎵 음악 연동
+- Spotify API 연동
+- YouTube Music 연동
+- 자동 가사 동기화
+
+### 🤖 AI 기능
+- 자동 타이밍 생성
+- 가사 감정 분석
+- 맞춤 번역 최적화
+
+### 📊 분석 도구
+- 시청자 언어 통계
+- 인기 곡 분석
+- 번역 품질 피드백
+
+## 13. 결론
+
+본 시스템은 노래 방송을 하는 크리에이터들이 전 세계 시청자와 소통할 수 있도록 돕는 도구입니다. 가라오케 스타일의 시각적 가사 표시와 실시간 다국어 번역을 통해 언어 장벽을 넘어선 음악적 경험을 제공합니다. OBS와의 완벽한 통합으로 기존 방송 워크플로우에 쉽게 추가할 수 있으며, 직관적인 인터페이스로 누구나 쉽게 사용할 수 있습니다.

@@ -1,0 +1,147 @@
+## Table Schema Migration
+
+We are using Supabase for database provider and Drizzle for ORM.
+Don't change schema directly by supabase dashboard, only with drizzle orm.
+Table name should be snake case with plural.
+If we need to revise db schema, first revise `@/db/schema.ts`, then `npm run db:migrate`.
+Consider tightly rls policy when define schema:
+
+1. If public read is desired, Grant SELECT to Both anon and authenticated Roles
+
+```sql
+create policy "Enable read access for all users"
+  on my_table for select
+  to anon, authenticated
+  using (true);
+```
+
+In Drizzle:
+
+```ts
+pgPolicy("Enable read access for all users", {
+  for: "select",
+  to: [anonRole, authenticatedRole],
+  using: sql`true`,
+});
+```
+
+2. use `(select auth.uid())` in policy expressions, not just `auth.uid()`:
+
+```sql
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id)
+```
+
+In Drizzle:
+
+```ts
+using: sql`(select auth.uid()) = user_id`,
+withCheck: sql`(select auth.uid()) = user_id`,
+```
+
+3/ Use IN Subqueries for Nested Table Ownership to avoid joins
+
+```sql
+using (
+  author_id in (
+    select id from profiles where user_id = (select auth.uid())
+  )
+)
+```
+
+In Drizzle:
+
+```ts
+using: sql`author_id in (select id from profiles where user_id = (select auth.uid()))`,
+withCheck: sql`author_id in (select id from profiles where user_id = (select auth.uid()))`,
+```
+
+EXAMPLE
+
+```ts
+import {
+  integer,
+  jsonb,
+  pgEnum,
+  pgPolicy,
+  pgSchema,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uuid,
+  boolean,
+} from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { anonRole, authenticatedRole } from "drizzle-orm/supabase";
+import { users } from "./external-schema";
+
+export const profiles = pgTable(
+  "profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull().unique(),
+    name: text("name"),
+    avatar_url: text("avatar_url"),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+    user_id: uuid("user_id")
+      .references(() => users.id)
+      .notNull(),
+    marketing_data: jsonb("marketing_data"),
+    onboarding_completed_at: timestamp("onboarding_completed_at"),
+    user_type: userTypeEnum("user_type").default("GENERAL").notNull(),
+  },
+  (table) => [
+    pgPolicy("Enable read access for all users", {
+      for: "select",
+      to: [anonRole, authenticatedRole],
+      using: sql`true`,
+    }),
+    pgPolicy("Enable insert for authenticated users only", {
+      for: "insert",
+      to: authenticatedRole,
+      withCheck: sql`(select auth.uid()) = user_id`,
+    }),
+    pgPolicy("Enable update for users based on user_id", {
+      for: "update",
+      to: authenticatedRole,
+      using: sql`(select auth.uid()) = user_id`,
+      withCheck: sql`(select auth.uid()) = user_id`,
+    }),
+    pgPolicy("Enable delete for users based on user_id", {
+      for: "delete",
+      to: authenticatedRole,
+      using: sql`(select auth.uid()) = user_id`,
+    }),
+  ]
+).enableRLS();
+
+// has table reference
+export const templateViews = pgTable(
+  "template_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id"), // Nullable, stores auth.uid() if user is logged in
+    templateId: uuid("template_id")
+      .notNull()
+      .references(() => templates.id, { onDelete: "cascade" }),
+    viewedAt: timestamp("viewed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    pgPolicy("Enable read access for all users", {
+      for: "select",
+      to: [anonRole, authenticatedRole],
+      using: sql`true`,
+    }),
+    pgPolicy("Allow all users to insert views", {
+      for: "insert",
+      to: [anonRole, authenticatedRole],
+      withCheck: sql`(${table.userId} IS NULL AND (SELECT auth.uid()) IS NULL) OR (${table.userId} IS NOT NULL AND ${table.userId} = (SELECT auth.uid()))`,
+    }),
+  ]
+).enableRLS();
+```

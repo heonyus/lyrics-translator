@@ -1,0 +1,168 @@
+{
+  "name": "lyrics-translator",
+  "description": "Karaoke-style lyrics translator with real-time rendering",
+  "version": "0.1.0",
+  "models": {
+    "default": "gemini-1.5-pro",
+    "codeReview": "gemini-1.5-pro",
+    "optimization": "gemini-1.5-flash"
+  },
+  "settings": {
+    "temperature": 0.3,
+    "maxTokens": 8000,
+    "topP": 0.95,
+    "topK": 40
+  },
+  "optimization": {
+    "realtime": {
+      "priority": "high",
+      "focus": [
+        "karaoke rendering performance",
+        "word-by-word animation smoothness",
+        "translation API efficiency",
+        "OBS overlay optimization"
+      ]
+    },
+    "caching": {
+      "enabled": true,
+      "strategies": [
+        "translation result caching",
+        "LRC parsing cache",
+        "animation frame caching"
+      ]
+    },
+    "performance": {
+      "targets": {
+        "fps": 60,
+        "renderTime": "<16ms",
+        "translationLatency": "<500ms",
+        "memoryUsage": "<100MB"
+      }
+    }
+  },
+  "domains": {
+    "lyrics": {
+      "description": "LRC file parsing and lyrics data management",
+      "optimizations": [
+        "Efficient parsing algorithms",
+        "Word-level timing precision",
+        "Memory-efficient data structures"
+      ]
+    },
+    "karaoke": {
+      "description": "Real-time karaoke rendering and animations",
+      "optimizations": [
+        "GPU-accelerated animations",
+        "Frame-perfect synchronization",
+        "Smooth word transitions"
+      ]
+    },
+    "translation": {
+      "description": "Real-time translation with caching",
+      "optimizations": [
+        "API call batching",
+        "Intelligent caching",
+        "Parallel processing"
+      ]
+    },
+    "sync": {
+      "description": "Audio-lyrics synchronization",
+      "optimizations": [
+        "Low-latency timing",
+        "Jitter compensation",
+        "Adaptive sync algorithms"
+      ]
+    },
+    "overlay": {
+      "description": "OBS-compatible transparent overlay",
+      "optimizations": [
+        "Transparent rendering",
+        "Minimal CPU usage",
+        "Browser source compatibility"
+      ]
+    }
+  },
+  "prompts": {
+    "codeReview": {
+      "template": "Review this {{domain}} code for: 1) Performance optimization opportunities, 2) TypeScript best practices, 3) React 19 patterns, 4) Memory efficiency. Focus on real-time rendering requirements.",
+      "context": [
+        "This is a karaoke lyrics translator",
+        "Must maintain 60 FPS",
+        "OBS Browser Source compatible",
+        "Real-time performance critical"
+      ]
+    },
+    "optimize": {
+      "template": "Optimize this {{feature}} for: 1) Rendering performance, 2) Memory usage, 3) Animation smoothness. Consider: {{specific_requirements}}",
+      "examples": {
+        "wordHighlight": "Optimize word highlighting animation for 60 FPS with minimal repaints",
+        "translationCache": "Optimize translation caching for <500ms response time",
+        "lrcParser": "Optimize LRC parsing for files up to 10,000 lines"
+      }
+    },
+    "analyze": {
+      "template": "Analyze the {{domain}} architecture and suggest improvements for: 1) Code organization, 2) Performance bottlenecks, 3) Scalability issues",
+      "focus": [
+        "Domain separation",
+        "Cross-domain communication",
+        "State management efficiency"
+      ]
+    }
+  },
+  "scripts": {
+    "review": "gemini review --model codeReview --context .gemini.json",
+    "optimize": "gemini optimize --model optimization --target {{target}}",
+    "analyze": "gemini analyze --model default --depth full"
+  },
+  "integration": {
+    "serena": {
+      "enabled": true,
+      "sync": "bidirectional",
+      "patterns": [
+        "Use Serena for semantic search before optimization",
+        "Update Serena index after Gemini refactoring",
+        "Cross-reference optimization suggestions"
+      ]
+    },
+    "vscode": {
+      "enabled": true,
+      "shortcuts": {
+        "review": "Ctrl+Shift+G R",
+        "optimize": "Ctrl+Shift+G O",
+        "analyze": "Ctrl+Shift+G A"
+      }
+    }
+  },
+  "workflow": {
+    "development": [
+      {
+        "step": 1,
+        "action": "Use Serena MCP to find similar patterns",
+        "tool": "serena"
+      },
+      {
+        "step": 2,
+        "action": "Implement initial code",
+        "tool": "manual"
+      },
+      {
+        "step": 3,
+        "action": "Review code with Gemini",
+        "tool": "gemini",
+        "command": "npm run gemini:review"
+      },
+      {
+        "step": 4,
+        "action": "Optimize performance",
+        "tool": "gemini",
+        "command": "npm run gemini:optimize"
+      },
+      {
+        "step": 5,
+        "action": "Update Serena index",
+        "tool": "serena",
+        "command": "serena index"
+      }
+    ]
+  }
+}

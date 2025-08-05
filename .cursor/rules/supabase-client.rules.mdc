@@ -1,0 +1,23 @@
+## Supabase Client for user session
+
+Use Supabase Client in order to get the current user session, connect to supabase storage or realtime, NOT for database CRUD: instead view [action_rules.md](mdc:docs/action_rules.md) for database CRUD.
+There are two kind of Supabase client at `@/utils/supabase`, `browser.ts/createClient()` (used at client component) and `server.ts/createClient()` (used at server component)
+Use server client at server component like `@/app/**/layout.tsx`, `@/app/**/page.tsx` which is server component.
+
+```tsx
+import { createClient } from "@/utils/supabase/server";
+export default async function Page() {
+  // Get current user session from Supabase
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  // If this page is protected for authenticated user.
+  if (!user) {
+    // If not authenticated, redirect to login
+    return redirect("/login");
+  }
+
+  // ...
+}
+```

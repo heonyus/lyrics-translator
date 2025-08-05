@@ -1,0 +1,202 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Technical Requirements Document (TRD)
+
+## 1. Executive Technical Summary
+
+### 프로젝트 개요  
+통합형 실시간 음성 통역 시스템은 브라우저 마이크 입력을 초저지연으로 인식(STT), 선택된 다국어로 번역 및 음성 합성(TTS) 후 순차 재생까지 지원합니다. 모듈화된 API 어댑터 구조로 GPT-4o, Soniox, Google Translate/TTS, Gemini 등 다양한 STT/번역/TTS 서비스를 플러그인 형태로 교체·조합할 수 있습니다.
+
+### 핵심 기술 스택  
+- Frontend: Next.js, React, TypeScript  
+- Backend & 실시간 처리: Node.js, WebSocket(‘ws’), Web Audio API  
+- 데이터베이스: PostgreSQL (Supabase) + Prisma ORM  
+- 캐싱: Redis  
+- 인증·인가: Supabase Auth (이메일 · 소셜)  
+- 배포·CI: Docker Compose, GitHub Actions  
+
+### 주요 기술 목표  
+- 지연시간: 300ms 이하(엔드투엔드)  
+- 동시 세션: 100+  
+- 가용성: 99.9% 이상  
+- 확장성: API 어댑터 추가·교체 용이  
+- 보안·컴플라이언스: API 키 암호화, GDPR/PCI-DSS 고려  
+
+### 주요 가정  
+- 클라이언트 네트워크 레이턴시 < 100ms  
+- STT/TTS API 평균 응답시간 < 200ms  
+- 브라우저는 PCM 16kHz 오디오 캡처 지원  
+- Supabase Postgres 연결 안정성 확보  
+
+---
+
+## 2. Tech Stack
+
+| Category         | Technology / Library        | Reasoning                                               |
+| ---------------- | --------------------------- | ------------------------------------------------------- |
+| 언어             | TypeScript                  | 정적 타입 보장, 대규모 코드베이스 유지보수성 향상        |
+| 프레임워크       | Next.js                      | SSR/SSG 지원, API 라우트 내장으로 단일 스택 구성        |
+| 백엔드 런타임    | Node.js                      | WebSocket 및 비동기 I/O 최적화, 풍부한 에코시스템       |
+| WebSocket       | ws                           | 경량·표준 WebSocket 구현, 커스텀 스트리밍 제어 용이     |
+| 오디오 처리      | Web Audio API               | 브라우저 오디오 캡처·재생 제어                         |
+| ORM              | Prisma                       | 타입 안전한 DB 액세스, 간편한 마이그레이션              |
+| 데이터베이스     | PostgreSQL (Supabase)        | 신뢰성 높은 관계형 DB, Supabase 통합 Auth/Storage 지원   |
+| 캐시·메시지큐    | Redis                        | 빠른 키밸류 캐시, 세션 관리·백프레셔 제어               |
+| 인증·인가        | Supabase Auth                | 이메일·소셜 로그인 내장, JWT 기반                      |
+| UI 상태관리      | React Context + SWR          | 간단한 글로벌 상태 및 데이터 패칭                        |
+| CI/CD            | GitHub Actions               | Git 기반 워크플로우, Docker 빌드·테스트 자동화         |
+| 컨테이너·배포    | Docker Compose               | 개발·스테이징 환경 간편 구성                            |
+| 모니터링 & 로깅  | Sentry, Prometheus + Grafana | 에러 추적(Sentry), 메트릭 수집·대시보드(Prometheus)     |
+
+---
+
+## 3. System Architecture Design
+
+### Top-Level Building Blocks  
+- Client (Browser)  
+  - MicCapture: Web Audio API 기반 마이크 캡처  
+  - UI: 언어 선택, 볼륨·마이크 토글, 실시간 로그  
+  - AudioPlayer: 오디오 재생·진행률 표시  
+- API Gateway (Next.js)  
+  - REST API: 설정/유저·언어 CRUD  
+  - WebSocket 서버: 실시간 오디오 스트리밍 처리  
+  - Auth Middleware: Supabase JWT 검증  
+- Real-time Translation Service (Node.js)  
+  - PipelineManager: STT→번역→TTS 파이프라인 제어  
+  - AudioQueue: 우선순위 기반 순차 재생 큐  
+  - Adapter Layer: GPT4o, Soniox, Google, Gemini 어댑터  
+- Data Store  
+  - PostgreSQL: 사용자 설정·로그 저장  
+  - Redis: 번역 캐시, 세션·백프레셔 제어  
+- External Services  
+  - Supabase Auth  
+  - Toss Payments (유료 플랜 결제)  
+  - Google Login  
+
+### Top-Level Component Interaction Diagram  
+```mermaid
+graph TD
+  Client -->|API 요청| NextAPI[Next.js API]
+  Client -->|WebSocket| WS[WebSocket 서버]
+  WS --> Pipeline[PipelineManager]
+  Pipeline --> Adapter[API 어댑터 층]
+  Adapter --> External[외부 STT/번역/TTS 서비스]
+  NextAPI --> DB[PostgreSQL]
+  NextAPI --> Cache[Redis]
+```
+
+- 클라이언트는 REST API로 설정·인증, WebSocket으로 실시간 스트리밍 제어  
+- WebSocket 서버는 PipelineManager로 데이터 전달  
+- PipelineManager는 Adapter Layer를 통해 외부 STT/번역/TTS 호출  
+- 설정·로그는 PostgreSQL, 캐싱·세션 관리는 Redis 활용  
+
+### Code Organization & Convention
+
+#### Domain-Driven Organization Strategy  
+- Domain Separation: speech, translation, tts, pipeline, queue, api, settings, ui  
+- Layer-Based Architecture  
+  - Presentation (Next.js pages/components)  
+  - Application (서비스 트랜잭션·유스케이스)  
+  - Domain (엔티티·밸류 오브젝트·도메인 로직)  
+  - Infrastructure (DB, WebSocket, 외부 API 클라이언트)  
+- Feature-Based Modules: 각 도메인별 모듈 폴더에 통합  
+- Shared Components: UI 컴포넌트, 유틸·타입, 상수  
+
+#### Universal File & Folder Structure  
+(monorepo 구조)
+
+```
+/
+├── apps
+│   ├── web                   # Next.js 프론트엔드
+│   └── realtime-service      # Node.js WebSocket & 파이프라인
+├── packages
+│   ├── domains               # 도메인 로직 (speech, translation, tts…)
+│   ├── adapters              # GPT4o, Soniox, Google, Gemini 어댑터
+│   ├── shared                # 공통 유틸, 타입, 상수
+│   └── ui-components         # 재사용 가능한 React 컴포넌트
+├── infra
+│   ├── db                    # Prisma 스키마·마이그레이션
+│   └── docker                # Docker Compose 설정
+├── .github                   # GitHub Actions 워크플로우
+└── README.md
+```
+
+### Data Flow & Communication Patterns  
+- Client-Server Communication:  
+  - RESTful API: 설정, 인증, 사용자·언어 CRUD  
+  - WebSocket: 오디오 청크 스트리밍, 실시간 이벤트  
+- Database Interaction:  
+  - Prisma ORM: Repository 패턴, 트랜잭션 제어  
+  - Connection Pool: Supabase/PostgreSQL  
+- External Service Integration:  
+  - 어댑터 패턴: 공통 인터페이스 통해 STT/번역/TTS 호출  
+  - 에러·재시도 로직, 서킷브레이커  
+- Real-time Communication:  
+  - ws 라이브러리: 양방향 스트리밍, 백프레셔 처리  
+- Data Synchronization:  
+  - Redis Pub/Sub: 멀티 인스턴스 WebSocket 스케일링 시 세션 이벤트 분배  
+
+---
+
+## 4. Performance & Optimization Strategy  
+- STT/번역 API 호출 병렬 처리 및 Promise.all 사용  
+- 오디오 청크 크기·인코딩 최적화(PCM16 → Opus) 고민  
+- Redis 캐시 활용: 중복 번역·TTS 결과 재사용  
+- WebSocket Keepalive·백프레셔(backpressure) 관리  
+
+---
+
+## 5. Implementation Roadmap & Milestones
+
+### Phase 1: Foundation (MVP Implementation)  
+- Core Infrastructure: Next.js + Node.js WebSocket 기본 구조  
+- Essential Features: GPT-4o Realtime 통합(STT+번역+TTS)  
+- Basic Security: Supabase Auth 이메일·소셜 로그인, JWT 보호  
+- Development Setup: Docker Compose, GitHub Actions CI  
+- Timeline: 4주  
+
+### Phase 2: Feature Enhancement  
+- Advanced Features: Soniox STT, Google Translate/TTS, Gemini TTS 어댑터 추가  
+- Performance Optimization: Redis 캐시, 오디오 인코딩 최적화  
+- Enhanced Security: API 키 암호화 저장, CORS 강화  
+- Monitoring Implementation: Sentry 에러 추적, Prometheus 메트릭  
+- Timeline: 6주  
+
+### Phase 3: Scaling & Optimization  
+- Scalability Implementation: Docker Swarm/Kubernetes 분산 배포, Auto-Scaling  
+- Advanced Integrations: Toss Payments 결제 플랜, Google Login  
+- Enterprise Features: CQRS/이벤트 소싱, AOP 기반 로깅·트랜잭션  
+- Compliance & Auditing: GDPR, PCI-DSS, 보안 감사 리포트  
+- Timeline: 8주  
+
+---
+
+## 6. Risk Assessment & Mitigation Strategies
+
+### Technical Risk Analysis  
+- Technology Risks: 외부 API 레이턴시·변경  
+  - Mitigation: 어댑터 추상화, 모의(Mock) 테스트  
+- Performance Risks: 동시 세션 과부하  
+  - Mitigation: 백프레셔·로드 밸런싱, Redis 세션 분산  
+- Security Risks: API 키 유출, XSS/CSRF  
+  - Mitigation: env var 암호화, CSP·Helmet 적용  
+- Integration Risks: 서드파티 서비스 장애  
+  - Mitigation: 장애 시 폴백(fallback) 모드, 재시도 정책  
+
+### Project Delivery Risks  
+- Timeline Risks: 기능 복잡도 과소평가  
+  - Contingency: 10% 버퍼 타임, 스프린트별 리뷰  
+- Resource Risks: 모듈별 전문성 편차  
+  - Contingency: 외부 컨설팅, 코드 리뷰 강화  
+- Quality Risks: 테스트 커버리지 저조  
+  - Contingency: CI 실패 시 배포 차단, E2E 테스트 자동화  
+- Deployment Risks: 환경별 설정 불일치  
+  - Contingency: 스테이징 환경 미러링, IaC 문서화  
+
+---  
+
+*상기 TRD는 PRD 요구사항을 충실히 반영했으며, 불필요한 과설계를 배제한 최소·실용적 기술 스택 및 아키텍처를 제안합니다.*

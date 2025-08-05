@@ -1,0 +1,102 @@
+## Next15 Server Component
+
+Next15 server component must useing async function and props type must be promise like below:
+```tsx
+export default async function LecturePage({
+  params,
+}: {
+  params: Promise<{ enrollmentId: string }>;
+}) {
+
+````
+
+
+## Frontend UI Building
+
+ONLY USE EXISTING Shadcn UI at `@/components/ui` or `@/domains/{domain_name}/components/*.tsx`, `radix ui`. When plan to code client component or server component for frontend, must call /context7 shadcn or related docs and then refer from official docs. If there aren't working what expected, examine shadcn components ui files or calling /context7 shadcn tools, then modify it.
+**Server page**: Only renders layout and imports the client component. Handles no UI logic or state. Fetch data with server action if needed.
+**Client component**: UI logic and interactivity (form state, handlers) must be in a separate file, named in kebab-case (e.g., `@/domains/{domain_name}/components/onboarding-form.tsx)`, and must include `"use client"` at the top. Located at components folder which is below same page route file.
+Client component always named export, and import to index.tsx located at same folder.
+
+There are two kind of client components: ui logic and business logic.
+USE react `useState`, `useContext` for state management, use theses `useActionState`, `useTransition`, `useOptimistic` for fluent user experience.
+
+MAKE SURE SEPERATE THESE LOGIC LIKE BELOW:
+
+```ts
+// (1) UI 로직 컴포넌트
+function OrderForm() {
+  const [form, setForm] = useState({ qty: 1, promo: "" });
+
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  return (
+    <form>
+      <input name="qty" value={form.qty} onChange={handleChange} />
+      <input name="promo" value={form.promo} onChange={handleChange} />
+      <OrderSummary form={form} />
+    </form>
+  );
+}
+
+// (2) 비즈니스 로직을 분리한 서비스/훅
+async function calculateDiscountedPrice({ qty, promo }) {
+  const basePrice = await fetchBasePrice(); // API 호출
+  const discount = promo === "VIP" ? 0.2 : 0; // 도메인 규칙
+  return basePrice * qty * (1 - discount);
+}
+
+function useOrderSummary(form) {
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    calculateDiscountedPrice(form).then(setSummary);
+  }, [form]);
+
+  return summary;
+}
+
+// (3) UI 로직 + 비즈니스 로직을 연결
+function OrderSummary({ form }) {
+  const summary = useOrderSummary(form); // 비즈니스 훅(로직)
+
+  if (summary == null) return <p>로딩 중…</p>;
+  return <p>총 금액: {summary.toLocaleString()}원</p>;
+}
+```
+
+```project structure
+app
+├─ (dashboard)
+│  ├─ [project_id]
+│  ├─ ├─ layout.tsx
+│  ├─ ├─ page.tsx
+domains
+├─ n8n-templates
+│  ├─ components
+│  ├─ ├─ main-sidebar.tsx -> client component
+│  ├─ ├─ index.ts
+│  ├─ actions
+│  ├─ ├─ fetch.actions.ts -> server action
+│  ├─ ├─ index.ts
+```
+
+### Theming & Styling
+
+Use only semantic utility classes (e.g., `bg-card`, `text-card-foreground`, `text-destructive`) . These map to CSS variables defined in [globals.css](mdc:src/app/globals.css) and adapt to theme changes.
+Avoid using explicit color classes (e.g., `bg-white`, `text-red-500`).
+Always use semantic classes for theming.
+Use basic appearing animation always.
+
+### USING TOASTER
+
+shadcn `@/components/ui/toast` component deprecated, so we should use `@/components/ui/sooner` like below:
+
+```tsx
+import { toast } from "sonner";
+
+// ...
+toast("Event has been created.");
+```
