@@ -6,6 +6,11 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || process.env.perplex
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.tavily_api_key || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
+// API 키 확인
+if (!OPENAI_API_KEY) {
+  console.error('⚠️ OPENAI_API_KEY is not set');
+}
+
 // Supabase 클라이언트
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://oegdmvhsykhlpmuuizju.supabase.co',

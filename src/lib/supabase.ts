@@ -34,9 +34,18 @@ export const supabase = (() => {
   return supabaseInstance!;
 })();
 
-// Admin client for server-side operations
+// Admin client for server-side operations ONLY
 export const supabaseAdmin = () => {
-  const supabaseServiceRole = process.env.SUPABASE_SERVICE_ROLE || '';
+  // 클라이언트 사이드에서 호출 방지
+  if (typeof window !== 'undefined') {
+    throw new Error('supabaseAdmin can only be used on the server side');
+  }
+  
+  const supabaseServiceRole = process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  
+  if (!supabaseServiceRole) {
+    throw new Error('SUPABASE_SERVICE_ROLE is not set');
+  }
   
   return createClient(supabaseUrl, supabaseServiceRole, {
     auth: {

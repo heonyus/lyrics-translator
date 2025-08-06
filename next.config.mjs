@@ -5,6 +5,12 @@ const nextConfig = {
     // Enable experimental features for better performance
     optimizeCss: true,
   },
+  // 환경 변수 설정
+  env: {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    PERPLEXITY_API_KEY: process.env.PERPLEXITY_API_KEY,
+    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+  },
   // CORS headers for OBS Browser Source compatibility
   async headers() {
     return [

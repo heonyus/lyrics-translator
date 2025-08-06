@@ -6,6 +6,13 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || process.env.perplex
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.tavily_api_key || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
+// API 키 확인 로그 (디버깅용)
+if (!OPENAI_API_KEY) {
+  console.error('⚠️ OPENAI_API_KEY is not set in environment variables');
+} else {
+  console.log('✅ OpenAI API Key loaded:', OPENAI_API_KEY.substring(0, 10) + '...');
+}
+
 // Supabase 클라이언트
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://oegdmvhsykhlpmuuizju.supabase.co',
@@ -123,7 +130,7 @@ export async function POST(request: NextRequest) {
           });
         }),
       
-      // GPT-4
+      // GPT-4o-mini (가성비 최고 모델)
       searchWithGPT(searchArtist, artist, searchTitle, title)
         .then(result => {
           if (result) {
@@ -136,10 +143,10 @@ export async function POST(request: NextRequest) {
           }
         })
         .catch(error => {
-          console.error('GPT-4 error:', error);
+          console.error('GPT-4o-mini error:', error);
           results.push({
             lyrics: '',
-            source: 'AI-GPT4',
+            source: 'AI-GPT4o-mini',
             confidence: 0,
             title,
             artist,
@@ -277,7 +284,7 @@ Follow the Chain of Thought process and examples above.`;
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 4000,
+        max_tokens: 8000,
         stream: false
       })
     });
@@ -315,6 +322,12 @@ Follow the Chain of Thought process and examples above.`;
 }
 
 async function searchWithGPT(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string) {
+  // API 키 체크
+  if (!OPENAI_API_KEY || OPENAI_API_KEY.length < 10) {
+    console.error('OpenAI API key is missing or invalid');
+    throw new Error('OpenAI API key not configured');
+  }
+  
   const systemPrompt = `You are a professional lyrics database system. You must follow a strict Chain of Thought process.
 
 ## CHAIN OF THOUGHT PROCESS:
@@ -386,6 +399,8 @@ Output:
 Song: ${searchTitle} (${originalTitle})`;
 
   try {
+    console.log('Calling OpenAI API with key:', OPENAI_API_KEY ? `${OPENAI_API_KEY.substring(0, 20)}...` : 'NO KEY');
+    
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -393,18 +408,24 @@ Song: ${searchTitle} (${originalTitle})`;
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4-0125-preview',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 4000
+        max_tokens: 8000
       })
     });
 
     if (!response.ok) {
       const errorData = await response.text();
+      console.error('OpenAI API Error Details:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData,
+        keyUsed: OPENAI_API_KEY ? `${OPENAI_API_KEY.substring(0, 20)}...` : 'NO KEY'
+      });
       throw new Error(`OpenAI API Error: ${response.status} - ${errorData}`);
     }
 
@@ -419,7 +440,7 @@ Song: ${searchTitle} (${originalTitle})`;
     
     return {
       lyrics: content.trim(),
-      source: 'AI-GPT4',
+      source: 'AI-GPT4o-mini',
       confidence,
       title: originalTitle,
       artist: originalArtist

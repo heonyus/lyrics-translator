@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { LyricsSearchServiceClient } from '@/services/lyrics-search-service-client';
 import { supabase } from '@/lib/supabase';
 import { checkTablesExist } from '@/lib/init-database';
+import { checkRequiredTables } from '@/lib/auto-init-database';
 
 type ControlMode = 'manual' | 'learning' | 'auto';
 type SearchMode = 'auto' | 'manual';
@@ -35,6 +36,7 @@ interface SearchResult {
   status: 'success' | 'failed' | 'searching';
   error?: string;
   preview?: string;
+  showFullLyrics?: boolean; // 전체 가사 표시 토글
 }
 
 export default function HostControlV2() {
@@ -61,16 +63,54 @@ export default function HostControlV2() {
   const lyricsSearchService = useRef(new LyricsSearchServiceClient());
   const [dbStatus, setDbStatus] = useState<string>('');
   
+  // 번역 설정
+  const [showTranslation, setShowTranslation] = useState(true);
+  const [translationLang, setTranslationLang] = useState('ko');
+  const [translationColor, setTranslationColor] = useState('#87CEEB');
+  
   // 데이터베이스 테이블 체크
   useEffect(() => {
+    // 먼저 간단한 체크
+    checkRequiredTables()
+      .then(allExist => {
+        if (!allExist) {
+          setDbStatus('⚠️ Supabase 테이블이 없습니다. 아래 안내를 참고하세요.');
+        } else {
+          setDbStatus('✅ 데이터베이스 준비 완료');
+        }
+      })
+      .catch(err => {
+        console.error('Table check error:', err);
+        setDbStatus('⚠️ Supabase 연결 확인 필요');
+      });
+    
+    // 상세 체크 (옵션)
     checkTablesExist().then(results => {
       const missing = results.filter(r => !r.exists);
       if (missing.length > 0) {
-        setDbStatus(`⚠️ 누락된 테이블: ${missing.map(m => m.table).join(', ')}`);
-      } else if (results.length > 0) {
-        setDbStatus('✅ 데이터베이스 준비 완료');
+        console.log('Missing tables:', missing.map(m => m.table));
       }
+    }).catch(() => {
+      // 에러 무시 (이미 위에서 처리)
     });
+  }, []);
+  
+  // 번역 설정을 localStorage에 동기화
+  useEffect(() => {
+    localStorage.setItem('obs_show_translation', showTranslation.toString());
+    localStorage.setItem('obs_translation_lang', translationLang);
+    localStorage.setItem('obs_translation_color', translationColor);
+  }, [showTranslation, translationLang, translationColor]);
+  
+  // 초기 로드 시 localStorage에서 번역 설정 읽기
+  useEffect(() => {
+    const savedShowTranslation = localStorage.getItem('obs_show_translation');
+    const savedTranslationLang = localStorage.getItem('obs_translation_lang');
+    const savedTranslationColor = localStorage.getItem('obs_translation_color');
+    
+    if (savedShowTranslation !== null) setShowTranslation(savedShowTranslation === 'true');
+    if (savedTranslationLang) setTranslationLang(savedTranslationLang);
+    if (savedTranslationColor) setTranslationColor(savedTranslationColor);
   }, []);
 
   // 가사 검색 (멀티 결과)
@@ -337,19 +377,29 @@ export default function HostControlV2() {
         
         {/* DB 상태 표시 */}
         {dbStatus && (
-          <div className={`text-center mb-4 px-4 py-2 rounded-lg ${
-            dbStatus.includes('⚠️') ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
+          <div className={`mb-4 px-4 py-3 rounded-lg ${
+            dbStatus.includes('⚠️') ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-300' : 'bg-green-100 text-green-800'
           }`}>
-            {dbStatus}
-            {dbStatus.includes('⚠️') && (
-              <div className="text-sm mt-2">
-                <a href="/create-tables.sql" download className="underline">
-                  SQL 스크립트 다운로드
-                </a>
-                <span className="mx-2">|</span>
-                <a href="https://supabase.com/dashboard" target="_blank" className="underline">
-                  Supabase 대시보드
-                </a>
+            <div className="font-semibold text-center">{dbStatus}</div>
+            {dbStatus.includes('테이블이 없습니다') && (
+              <div className="mt-3 space-y-2">
+                <p className="font-medium text-sm">📝 Supabase 테이블 설정 방법:</p>
+                <ol className="list-decimal list-inside space-y-1 text-sm">
+                  <li>
+                    <a href="https://supabase.com/dashboard" target="_blank" className="underline font-medium text-blue-600">
+                      Supabase Dashboard
+                    </a> 접속
+                  </li>
+                  <li>프로젝트 선택 → SQL Editor 클릭</li>
+                  <li>
+                    아래 SQL 파일 내용 복사:
+                    <code className="block bg-yellow-200 px-2 py-1 rounded mt-1 text-xs">
+                      /src/lib/database-init.sql
+                    </code>
+                  </li>
+                  <li>SQL Editor에 붙여넣기 → Run 버튼 클릭</li>
+                  <li>이 페이지 새로고침 (F5)</li>
+                </ol>
               </div>
             )}
           </div>
@@ -511,9 +561,32 @@ export default function HostControlV2() {
                       </div>
                       
                       {/* 가사 미리보기 */}
-                      <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 font-mono">
-                        <pre className="whitespace-pre-wrap">{result.preview || result.lyrics.slice(0, 200)}...</pre>
+                      <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 font-mono max-h-96 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap">
+                          {result.showFullLyrics 
+                            ? result.lyrics 
+                            : (result.preview || result.lyrics.slice(0, 200) + '...')}
+                        </pre>
                       </div>
+                      
+                      {/* 전체 보기 토글 버튼 */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const updatedResults = [...searchResults];
+                          const idx = searchResults.findIndex(r => r === result);
+                          if (idx >= 0) {
+                            updatedResults[idx] = {
+                              ...result,
+                              showFullLyrics: !result.showFullLyrics
+                            };
+                            setSearchResults(updatedResults);
+                          }
+                        }}
+                        className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        {result.showFullLyrics ? '▲ 접기' : '▼ 전체 가사 보기'}
+                      </button>
                     </div>
                   ))}
                 
@@ -688,6 +761,79 @@ export default function HostControlV2() {
         {/* 단축키 안내 */}
         <div className="mt-6 text-center text-sm text-gray-500">
           Space: 다음 | ←/→: 이전/다음 | Enter: 재생/정지 | S: 저장 (학습모드)
+        </div>
+
+        {/* 번역 설정 */}
+        <div className="mt-6 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center">
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+            </svg>
+            번역 설정
+          </h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 번역 표시 여부 */}
+            <div className="flex items-center justify-between bg-white rounded-lg p-3">
+              <label className="text-sm font-medium">번역 표시</label>
+              <button
+                onClick={() => setShowTranslation(!showTranslation)}
+                className={`w-12 h-6 rounded-full transition-colors ${
+                  showTranslation ? 'bg-blue-500' : 'bg-gray-300'
+                }`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                  showTranslation ? 'translate-x-6' : 'translate-x-1'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 번역 언어 선택 */}
+            <div className="bg-white rounded-lg p-3">
+              <label className="text-sm font-medium block mb-2">번역 언어</label>
+              <select
+                value={translationLang}
+                onChange={(e) => setTranslationLang(e.target.value)}
+                className="w-full px-3 py-1 border rounded-md text-sm"
+                disabled={!showTranslation}
+              >
+                <option value="ko">한국어</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="zh">中文</option>
+                <option value="es">Español</option>
+                <option value="fr">Français</option>
+              </select>
+            </div>
+            
+            {/* 번역 색상 선택 */}
+            <div className="bg-white rounded-lg p-3">
+              <label className="text-sm font-medium block mb-2">번역 텍스트 색상</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={translationColor}
+                  onChange={(e) => setTranslationColor(e.target.value)}
+                  className="w-12 h-8 border rounded cursor-pointer"
+                  disabled={!showTranslation}
+                />
+                <input
+                  type="text"
+                  value={translationColor}
+                  onChange={(e) => setTranslationColor(e.target.value)}
+                  className="flex-1 px-2 py-1 border rounded text-sm"
+                  disabled={!showTranslation}
+                  placeholder="#87CEEB"
+                />
+              </div>
+            </div>
+          </div>
+          
+          {showTranslation && (
+            <div className="mt-3 text-xs text-gray-600">
+              💡 번역 설정은 OBS 오버레이에 실시간으로 반영됩니다
+            </div>
+          )}
         </div>
 
         {/* OBS 사용 안내 */}

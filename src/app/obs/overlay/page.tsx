@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface LyricsLine {
@@ -16,15 +16,23 @@ export default function OBSOverlay() {
   const [translation, setTranslation] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   
+  // 번역 캐시 추가
+  const translationCache = useRef<Map<string, string>>(new Map());
+  const lastTranslatedText = useRef<string>('');
+  
   // URL 파라미터 읽기
   const searchParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
   const chromaKey = searchParams.get('chromaKey') || '#00FF00';
   const fontSize = parseInt(searchParams.get('fontSize') || '60');
   const textColor = searchParams.get('textColor') || '#FFFFFF';
   const highlightColor = searchParams.get('highlightColor') || '#FFD700';
-  const translationColor = searchParams.get('translationColor') || '#87CEEB';
-  const showTranslation = searchParams.get('showTranslation') !== 'false';
-  const targetLang = searchParams.get('lang') || 'ko';
+  
+  // 번역 설정 - localStorage 우선, URL 파라미터 폴백
+  const [translationSettings, setTranslationSettings] = useState({
+    showTranslation: searchParams.get('showTranslation') !== 'false',
+    targetLang: searchParams.get('lang') || 'ko',
+    translationColor: searchParams.get('translationColor') || '#87CEEB'
+  });
   
   // localStorage에서 가사 및 상태 읽기
   useEffect(() => {
@@ -62,19 +70,45 @@ export default function OBSOverlay() {
       // 재생 상태
       const playState = localStorage.getItem('karaoke_control');
       setIsPlaying(playState === 'play');
+      
+      // 번역 설정 동기화
+      const showTrans = localStorage.getItem('obs_show_translation');
+      const transLang = localStorage.getItem('obs_translation_lang');
+      const transColor = localStorage.getItem('obs_translation_color');
+      
+      setTranslationSettings(prev => ({
+        showTranslation: showTrans !== null ? showTrans === 'true' : prev.showTranslation,
+        targetLang: transLang || prev.targetLang,
+        translationColor: transColor || prev.translationColor
+      }));
     }, 100);
     
     return () => clearInterval(interval);
   }, []);
   
-  // 번역 가져오기
+  // 번역 가져오기 (캐싱 적용)
   useEffect(() => {
-    if (lyrics[currentLineIndex] && showTranslation) {
+    if (lyrics[currentLineIndex] && translationSettings.showTranslation) {
       const currentText = lyrics[currentLineIndex].text;
       
       // 빈 텍스트는 번역하지 않음
       if (!currentText.trim()) {
         setTranslation('');
+        return;
+      }
+      
+      // 이미 번역한 텍스트인지 확인
+      if (lastTranslatedText.current === currentText) {
+        return; // 같은 텍스트는 다시 번역하지 않음
+      }
+      
+      // 캐시 키 생성 (텍스트 + 언어)
+      const cacheKey = `${currentText}_${translationSettings.targetLang}`;
+      
+      // 캐시에서 확인
+      if (translationCache.current.has(cacheKey)) {
+        setTranslation(translationCache.current.get(cacheKey) || '');
+        lastTranslatedText.current = currentText;
         return;
       }
       
@@ -84,14 +118,17 @@ export default function OBSOverlay() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: currentText,
-          targetLang: targetLang,
+          targetLang: translationSettings.targetLang,
           sourceLang: 'auto'
         })
       })
       .then(res => res.json())
       .then(data => {
         if (data.success) {
+          // 캐시에 저장
+          translationCache.current.set(cacheKey, data.translation);
           setTranslation(data.translation);
+          lastTranslatedText.current = currentText;
         } else {
           setTranslation('');
         }
@@ -100,8 +137,12 @@ export default function OBSOverlay() {
         console.error('Translation error:', err);
         setTranslation('');
       });
+    } else {
+      // 번역 표시 안 함
+      setTranslation('');
+      lastTranslatedText.current = '';
     }
-  }, [currentLineIndex, lyrics, showTranslation, targetLang]);
+  }, [currentLineIndex, lyrics, translationSettings.showTranslation, translationSettings.targetLang]);
   
   // LRC 파싱 함수
   const parseLRC = (lrcContent: string): LyricsLine[] => {
@@ -235,11 +276,11 @@ export default function OBSOverlay() {
         </AnimatePresence>
         
         {/* 번역 (현재 라인 아래) */}
-        {showTranslation && translation && current && (
+        {translationSettings.showTranslation && translation && current && (
           <div
             style={{
               fontSize: `${fontSize * 0.6}px`,
-              color: translationColor,
+              color: translationSettings.translationColor,
               textShadow: `
                 -2px -2px 0 #000,  
                 2px -2px 0 #000,

@@ -24,15 +24,15 @@ export default function TitleDisplay() {
       const album = localStorage.getItem('current_song_album');
 
       if (title && artist) {
-        const newInfo = { title, artist, album: album || undefined };
-        
-        // 곡이 변경되었을 때 애니메이션
-        if (newInfo.title !== songInfo.title || newInfo.artist !== songInfo.artist) {
-          setAnimation(true);
-          setTimeout(() => setAnimation(false), 500);
-        }
-        
-        setSongInfo(newInfo);
+        setSongInfo(prev => {
+          // 곡이 변경되었을 때만 업데이트 및 애니메이션
+          if (prev.title !== title || prev.artist !== artist) {
+            setAnimation(true);
+            setTimeout(() => setAnimation(false), 500);
+            return { title, artist, album: album || undefined };
+          }
+          return prev;
+        });
       }
     };
 
@@ -40,7 +40,7 @@ export default function TitleDisplay() {
     const interval = setInterval(updateSongInfo, 500);
 
     return () => clearInterval(interval);
-  }, [songInfo]);
+  }, []); // 의존성 배열을 비워서 무한 루프 방지
 
   // URL 파라미터로 스타일 커스터마이징
   useEffect(() => {

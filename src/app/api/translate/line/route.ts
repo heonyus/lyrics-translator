@@ -11,7 +11,69 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Text is required' }, { status: 400 });
     }
     
-    // 먼저 Google Translate 시도
+    // 먼저 OpenAI GPT-4o-mini 시도 (더 자연스러운 번역)
+    if (OPENAI_API_KEY) {
+      try {
+        const langNames = {
+          ko: 'Korean',
+          en: 'English',
+          ja: 'Japanese',
+          zh: 'Chinese (Simplified)',
+          es: 'Spanish',
+          fr: 'French'
+        };
+        
+        const targetLangName = langNames[targetLang as keyof typeof langNames] || targetLang;
+        
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are an expert translator specializing in song lyrics and poetry. 
+
+Your task is to translate lyrics to ${targetLangName} while:
+1. Preserving the emotional tone and mood
+2. Maintaining poetic rhythm when possible
+3. Keeping cultural nuances and metaphors
+4. Using natural, singable expressions in the target language
+
+For K-pop or J-pop songs, preserve any intentional language mixing.
+Return ONLY the translation, no explanations or notes.`
+              },
+              {
+                role: 'user',
+                content: `Translate this song lyric line to ${targetLangName}:\n\n${text}`
+              }
+            ],
+            temperature: 0.4,
+            max_tokens: 500
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          return NextResponse.json({
+            success: true,
+            translation: data.choices[0].message.content.trim(),
+            source: 'GPT-4o-mini'
+          });
+        } else {
+          const errorData = await response.text();
+          console.error('OpenAI API Error:', response.status, errorData);
+        }
+      } catch (error) {
+        console.error('OpenAI translate error:', error);
+      }
+    }
+    
+    // GPT-4o-mini가 실패하면 Google Translate 시도
     if (GOOGLE_API_KEY) {
       try {
         const response = await fetch(
@@ -37,56 +99,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.error('Google Translate error:', error);
-      }
-    }
-    
-    // Google이 실패하면 OpenAI 시도
-    if (OPENAI_API_KEY) {
-      try {
-        const langNames = {
-          ko: 'Korean',
-          en: 'English',
-          ja: 'Japanese',
-          zh: 'Chinese',
-          es: 'Spanish',
-          fr: 'French'
-        };
-        
-        const targetLangName = langNames[targetLang as keyof typeof langNames] || targetLang;
-        
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a professional translator specializing in song lyrics. Translate the given lyrics to ${targetLangName}. Maintain the emotional tone and poetic nature of the lyrics. Return ONLY the translation, no explanations.`
-              },
-              {
-                role: 'user',
-                content: text
-              }
-            ],
-            temperature: 0.3,
-            max_tokens: 500
-          })
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          return NextResponse.json({
-            success: true,
-            translation: data.choices[0].message.content.trim(),
-            source: 'OpenAI GPT-3.5'
-          });
-        }
-      } catch (error) {
-        console.error('OpenAI translate error:', error);
       }
     }
     
