@@ -120,10 +120,29 @@ export class TextParser implements MetadataExtractor {
       }
     }
     
-    // Last resort: treat the whole input as title
+    // Check if input contains multiple words - might be "artist title" format
+    const words = cleanedInput.split(/\s+/);
+    if (words.length >= 2) {
+      // Common Korean/English artist-title patterns
+      const firstWord = words[0];
+      const restWords = words.slice(1).join(' ');
+      
+      // Check if first word could be an artist (Korean names are usually 2-4 chars)
+      const koreanPattern = /^[가-힣]{2,4}$/;
+      const englishPattern = /^[A-Za-z]+$/;
+      
+      if (koreanPattern.test(firstWord) || englishPattern.test(firstWord)) {
+        return {
+          title: restWords,
+          artist: firstWord
+        };
+      }
+    }
+    
+    // If single word input, use it for both title and artist for better search
     return {
       title: cleanedInput,
-      artist: '알 수 없는 아티스트'
+      artist: cleanedInput // Use same value instead of "unknown artist"
     };
   }
   
