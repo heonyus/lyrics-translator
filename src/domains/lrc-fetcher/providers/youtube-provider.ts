@@ -182,15 +182,22 @@ export class YouTubeProvider extends BaseProvider {
   
   private async fetchCaptions(url: string): Promise<YouTubeSubtitle[]> {
     try {
-      // Add format parameter for JSON3
-      const captionUrl = `${url}&fmt=json3`;
+      // Use server-side API to avoid CORS
+      const response = await fetch('/api/youtube/captions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
       
-      const response = await this.fetchWithTimeout(captionUrl);
       if (!response.ok) {
         throw new Error('자막을 가져올 수 없습니다');
       }
       
-      const data = await response.json();
+      const { success, data } = await response.json();
+      
+      if (!success || !data) {
+        return [];
+      }
       
       if (data.events) {
         return this.parseJson3Format(data.events);

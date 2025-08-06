@@ -30,8 +30,11 @@ export class LRClibProvider extends BaseProvider {
   
   protected async checkAvailability(): Promise<boolean> {
     try {
-      const response = await this.fetchWithTimeout(`${this.baseUrl}/search?q=test`, {
-        method: 'GET'
+      // Check if our API endpoint is available
+      const response = await fetch('/api/lrclib/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'test' })
       });
       return response.ok;
     } catch {
@@ -42,64 +45,36 @@ export class LRClibProvider extends BaseProvider {
   async searchLRC(query: SongQuery): Promise<LRCSearchResult[]> {
     this.updateRequestTime();
     
-    // Build search query - try multiple strategies
-    const results: LRCSearchResult[] = [];
-    
     try {
-      // Strategy 1: Search with specific fields if available
-      if (query.title && query.artist) {
-        const searchParams = new URLSearchParams();
-        searchParams.append('track_name', query.title);
-        searchParams.append('artist_name', query.artist);
-        if (query.album) {
-          searchParams.append('album_name', query.album);
-        }
-        
-        const response1 = await this.fetchWithTimeout(
-          `${this.baseUrl}/search?${searchParams.toString()}`,
-          {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json',
-              'User-Agent': 'LyricsTranslator/1.0'
-            }
-          }
-        );
-        
-        if (response1.ok) {
-          const data: LRClibSearchResponse[] = await response1.json();
-          results.push(...data.map(result => this.mapToSearchResult(result, query)));
-        }
+      // Use server-side API to avoid CORS
+      const response = await fetch('/api/lrclib/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artist: query.artist,
+          title: query.title,
+          album: query.album
+        })
+      });
+      
+      if (!response.ok) {
+        console.error('LRClib API error:', response.status);
+        return [];
       }
       
-      // Strategy 2: General search as fallback or primary
-      if (results.length === 0) {
-        const searchText = `${query.artist || ''} ${query.title || ''}`.trim();
-        if (searchText) {
-          const response2 = await this.fetchWithTimeout(
-            `${this.baseUrl}/search?q=${encodeURIComponent(searchText)}`,
-            {
-              method: 'GET',
-              headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'LyricsTranslator/1.0'
-              }
-            }
-          );
-          
-          if (response2.ok) {
-            const data: LRClibSearchResponse[] = await response2.json();
-            results.push(...data.map(result => this.mapToSearchResult(result, query)));
-          }
-        }
+      const { success, data } = await response.json();
+      
+      if (!success || !data) {
+        console.error('LRClib search failed');
+        return [];
       }
       
-      // Remove duplicates
-      const uniqueResults = results.filter((result, index, self) =>
-        index === self.findIndex(r => r.id === result.id)
+      // Map results
+      const results: LRCSearchResult[] = data.map((result: LRClibSearchResponse) => 
+        this.mapToSearchResult(result, query)
       );
       
-      return uniqueResults;
+      return results;
     } catch (error) {
       console.error('LRClib search error:', error);
       return [];
@@ -110,22 +85,21 @@ export class LRClibProvider extends BaseProvider {
     this.updateRequestTime();
     
     try {
-      const response = await this.fetchWithTimeout(
-        `${this.baseUrl}/get/${lrcId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'LyricsTranslator/1.0'
-          }
-        }
-      );
+      // Use server-side API to avoid CORS
+      const response = await fetch(`/api/lrclib/search?id=${lrcId}`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
       
       if (!response.ok) {
         throw new Error(`LRC를 가져올 수 없습니다: ${response.statusText}`);
       }
       
-      const data: LRClibSearchResponse = await response.json();
+      const { success, data } = await response.json();
+      
+      if (!success || !data) {
+        throw new Error('가사를 찾을 수 없습니다');
+      }
       
       // Prefer synced lyrics over plain lyrics
       if (data.syncedLyrics) {
