@@ -1,27 +1,42 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true
-  },
-  realtime: {
-    params: {
-      eventsPerSecond: 10
-    }
+// 싱글톤 패턴으로 하나의 인스턴스만 생성
+let supabaseInstance: ReturnType<typeof createClient> | null = null;
+
+export const supabase = (() => {
+  if (typeof window !== 'undefined' && !supabaseInstance) {
+    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined
+      },
+      realtime: {
+        params: {
+          eventsPerSecond: 10
+        }
+      }
+    });
+  } else if (!supabaseInstance) {
+    // 서버사이드용
+    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false
+      }
+    });
   }
-});
+  return supabaseInstance!;
+})();
 
 // Admin client for server-side operations
 export const supabaseAdmin = () => {
-  const supabaseServiceRole = process.env.SUPABASE_SERVICE_ROLE;
-  if (!supabaseServiceRole) {
-    throw new Error('SUPABASE_SERVICE_ROLE is not set');
-  }
+  const supabaseServiceRole = process.env.SUPABASE_SERVICE_ROLE || '';
   
   return createClient(supabaseUrl, supabaseServiceRole, {
     auth: {

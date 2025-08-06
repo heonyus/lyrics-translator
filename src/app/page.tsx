@@ -23,7 +23,7 @@ export default function Home() {
         <div className="grid md:grid-cols-2 gap-6">
           {/* 호스트 모드 */}
           <Link
-            href="/host"
+            href="/host-v2"
             className="group relative overflow-hidden bg-white rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-300 p-8"
           >
             <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-400 to-purple-400 opacity-10 rounded-full -mr-16 -mt-16 group-hover:scale-150 transition-transform duration-500" />
