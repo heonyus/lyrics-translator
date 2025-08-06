@@ -43,11 +43,12 @@ export class YouTubeProvider extends BaseProvider {
   
   protected async checkAvailability(): Promise<boolean> {
     try {
-      // Test with a known video
-      const response = await this.fetchWithTimeout(
-        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        { method: 'HEAD' }
-      );
+      // Check if our API endpoint is available
+      const response = await fetch('/api/youtube/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId: 'dQw4w9WgXcQ' })
+      });
       return response.ok;
     } catch {
       return false;
@@ -103,42 +104,18 @@ export class YouTubeProvider extends BaseProvider {
   
   private async getVideoInfo(videoId: string): Promise<YouTubeVideoInfo | null> {
     try {
-      const body = {
-        videoId,
-        context: {
-          client: {
-            hl: 'en',
-            gl: 'US',
-            clientName: 'WEB',
-            clientVersion: '2.20240101.00.00'
-          }
-        }
-      };
-      
-      const response = await this.fetchWithTimeout(
-        `${this.infoUrl}?key=${this.apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body)
-        }
-      );
+      const response = await fetch('/api/youtube/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId })
+      });
       
       if (!response.ok) {
         throw new Error('비디오 정보를 가져올 수 없습니다');
       }
       
-      const data = await response.json();
-      
-      return {
-        videoId,
-        title: data.videoDetails?.title || '',
-        author: data.videoDetails?.author || '',
-        duration: parseInt(data.videoDetails?.lengthSeconds || '0') * 1000,
-        captions: data.captions
-      };
+      const { data } = await response.json();
+      return data;
     } catch (error) {
       console.error('Failed to get video info:', error);
       return null;
@@ -147,13 +124,34 @@ export class YouTubeProvider extends BaseProvider {
   
   private async searchVideos(query: SongQuery): Promise<LRCSearchResult[]> {
     try {
-      // Use YouTube Data API v3 if available, or scraping as fallback
-      const searchQuery = `${query.artist} ${query.title} official`;
+      const response = await fetch('/api/youtube/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: { artist: query.artist, title: query.title } })
+      });
       
-      // For now, return empty array
-      // In production, implement proper YouTube search
-      console.warn('YouTube search not fully implemented');
-      return [];
+      if (!response.ok) {
+        console.error('YouTube search failed');
+        return [];
+      }
+      
+      const { data } = await response.json();
+      
+      return data.map((video: any) => ({
+        id: video.videoId,
+        title: video.title,
+        artist: video.author,
+        hasLyrics: true,
+        hasWordTiming: false,
+        hasSyncedLyrics: true,
+        provider: this.name,
+        confidence: 0.6,
+        metadata: {
+          videoId: video.videoId,
+          url: `https://www.youtube.com/watch?v=${video.videoId}`,
+          thumbnail: video.thumbnail
+        }
+      }));
     } catch (error) {
       console.error('YouTube search failed:', error);
       return [];

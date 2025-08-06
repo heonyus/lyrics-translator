@@ -9,8 +9,6 @@
     "start": "next start",
     "ws:server": "node server/websocket-server.js",
     "lint": "next lint",
-    "ws:server": "node server/websocket-server.js",
-    "dev:all": "concurrently \"npm run dev\" \"npm run ws:server\"",
     "gemini:review": "gemini review --config .gemini.json",
     "gemini:optimize": "gemini optimize --config .gemini.json",
     "gemini:analyze": "gemini analyze --config .gemini.json",

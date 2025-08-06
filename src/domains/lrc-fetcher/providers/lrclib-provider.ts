@@ -42,46 +42,64 @@ export class LRClibProvider extends BaseProvider {
   async searchLRC(query: SongQuery): Promise<LRCSearchResult[]> {
     this.updateRequestTime();
     
-    // Build search query
-    const searchParams = new URLSearchParams();
-    
-    // Primary search with track name and artist
-    if (query.title) {
-      searchParams.append('track_name', query.title);
-    }
-    if (query.artist) {
-      searchParams.append('artist_name', query.artist);
-    }
-    if (query.album) {
-      searchParams.append('album_name', query.album);
-    }
-    
-    // If no specific fields, use general search
-    if (!searchParams.toString()) {
-      const searchText = `${query.artist} ${query.title}`.trim();
-      searchParams.append('q', searchText);
-    }
+    // Build search query - try multiple strategies
+    const results: LRCSearchResult[] = [];
     
     try {
-      const response = await this.fetchWithTimeout(
-        `${this.baseUrl}/search?${searchParams.toString()}`,
-        {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'LyricsTranslator/1.0'
-          }
+      // Strategy 1: Search with specific fields if available
+      if (query.title && query.artist) {
+        const searchParams = new URLSearchParams();
+        searchParams.append('track_name', query.title);
+        searchParams.append('artist_name', query.artist);
+        if (query.album) {
+          searchParams.append('album_name', query.album);
         }
-      );
-      
-      if (!response.ok) {
-        console.error('LRClib search failed:', response.statusText);
-        return [];
+        
+        const response1 = await this.fetchWithTimeout(
+          `${this.baseUrl}/search?${searchParams.toString()}`,
+          {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'LyricsTranslator/1.0'
+            }
+          }
+        );
+        
+        if (response1.ok) {
+          const data: LRClibSearchResponse[] = await response1.json();
+          results.push(...data.map(result => this.mapToSearchResult(result, query)));
+        }
       }
       
-      const results: LRClibSearchResponse[] = await response.json();
+      // Strategy 2: General search as fallback or primary
+      if (results.length === 0) {
+        const searchText = `${query.artist || ''} ${query.title || ''}`.trim();
+        if (searchText) {
+          const response2 = await this.fetchWithTimeout(
+            `${this.baseUrl}/search?q=${encodeURIComponent(searchText)}`,
+            {
+              method: 'GET',
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'LyricsTranslator/1.0'
+              }
+            }
+          );
+          
+          if (response2.ok) {
+            const data: LRClibSearchResponse[] = await response2.json();
+            results.push(...data.map(result => this.mapToSearchResult(result, query)));
+          }
+        }
+      }
       
-      return results.map(result => this.mapToSearchResult(result, query));
+      // Remove duplicates
+      const uniqueResults = results.filter((result, index, self) =>
+        index === self.findIndex(r => r.id === result.id)
+      );
+      
+      return uniqueResults;
     } catch (error) {
       console.error('LRClib search error:', error);
       return [];
