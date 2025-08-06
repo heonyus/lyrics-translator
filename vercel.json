@@ -1,22 +1,55 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": ".next",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
   "framework": "nextjs",
-  "regions": ["iad1"],
-  "functions": {
-    "app/api/translate/route.ts": {
-      "maxDuration": 30
-    }
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "@supabase_url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@supabase_anon_key",
+    "SUPABASE_SERVICE_ROLE_KEY": "@supabase_service_role_key",
+    "OPENAI_API_KEY": "@openai_api_key",
+    "NEXT_PUBLIC_GOOGLE_API_KEY": "@google_api_key",
+    "SONIOX_API_KEY": "@soniox_api_key",
+    "WEBSOCKET_PORT": "3001",
+    "NEXT_PUBLIC_APP_URL": "@production_url"
   },
   "headers": [
     {
-      "source": "/overlay",
+      "source": "/api/(.*)",
       "headers": [
         {
-          "key": "X-Frame-Options",
-          "value": "ALLOWALL"
+          "key": "Access-Control-Allow-Credentials",
+          "value": "true"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET,OPTIONS,PATCH,DELETE,POST,PUT"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
         }
       ]
     }
-  ]
+  ],
+  "rewrites": [
+    {
+      "source": "/ws",
+      "destination": "https://your-websocket-server.com"
+    }
+  ],
+  "functions": {
+    "src/app/api/translate/ai/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/lyrics/search/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "regions": ["icn1"]
 }
