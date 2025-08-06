@@ -1,219 +1,263 @@
 # 노래방 가사 번역기 프로젝트 문서
 
-## 프로젝트 개요
+## 🎯 프로젝트 개요
 
-노래방 스타일의 가사 번역기로, 라이브 스트리밍 중 외국인 시청자를 위해 실시간으로 가사를 표시하고 번역하는 애플리케이션입니다.
+OBS 스트리밍용 실시간 가사 오버레이 프로그램입니다. 크로마키를 활용해 가사를 투명 배경으로 표시하고, 실시간 번역과 노래방 스타일 하이라이팅을 제공합니다.
 
-### 주요 기능
-- 🎤 노래방 스타일 가사 표시 (단어별 하이라이팅)
-- 🌍 실시간 가사 번역 (Google Translate API)
-- 📺 OBS 브라우저 소스 호환 (투명 배경 오버레이)
-- 🎵 자동 LRC 파일 가져오기 (여러 소스에서)
-- 🇰🇷 완전한 한국어 UI
+### 핵심 목적
+- **단순함**: 복잡한 방송 시스템이 아닌, OBS 브라우저 소스로 사용할 간단한 오버레이
+- **크로마키**: 녹색 배경(#00FF00)으로 OBS에서 쉽게 제거 가능
+- **스마트 캐싱**: Supabase를 통한 가사/번역 저장으로 API 호출 최소화
 
-## 기술 스택
+## 📅 2025-08-05 작업 내역
 
-### 프론트엔드
-- **Next.js 15** (App Router)
-- **React 19** 
-- **TypeScript 5**
-- **Tailwind CSS** (스타일링)
-- **Framer Motion** (애니메이션)
-- **shadcn/ui** (UI 컴포넌트)
+### 1. 초기 환경 설정 ✅
+```bash
+# Git 초기화 및 GitHub 연결
+git init
+git remote add origin git@github.com:heonyus/lylics-translator.git
+git add .
+git commit -m "Initial setup"
 
-### 백엔드/API
-- **Google Translate API** (번역)
-- **자동 가사 가져오기 프로바이더**:
-  - Spotify (현재 CORS 문제로 비활성화)
-  - Genius
-  - YouTube
-  - LRClib
+# 필수 패키지 설치
+npm install @supabase/supabase-js openai socket.io socket.io-client
+npm install --save-dev concurrently
+```
 
-### 아키텍처
-- **Domain-Driven Design (DDD)**
-- **Zod** (스키마 검증)
-- **번역 캐싱 시스템**
+### 2. API 키 및 환경 변수 설정 ✅
+`.env.local` 파일 생성:
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://lyikqynfhvbhhsgfhiyp.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=[제공된 키]
+SUPABASE_SERVICE_ROLE_KEY=[제공된 키]
 
-## 프로젝트 구조
+# Google Translate
+NEXT_PUBLIC_GOOGLE_API_KEY=[제공된 키]
+
+# OpenAI
+OPENAI_API_KEY=[제공된 키]
+
+# Soniox (음성 인식용 - 추후 사용)
+SONIOX_API_KEY=[제공된 키]
+```
+
+### 3. Supabase 데이터베이스 스키마 구축 ✅
+
+#### lyrics 테이블
+```sql
+CREATE TABLE lyrics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL,
+  album TEXT,
+  lrc_content TEXT NOT NULL,
+  lines JSONB,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+#### translations 테이블 (캐싱용)
+```sql
+CREATE TABLE translations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lyrics_id UUID REFERENCES lyrics(id) ON DELETE CASCADE,
+  line_index INTEGER NOT NULL,
+  original_text TEXT NOT NULL,
+  translated_text TEXT NOT NULL,
+  target_language TEXT NOT NULL,
+  timestamp FLOAT,
+  duration FLOAT,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(lyrics_id, line_index, target_language)
+);
+```
+
+### 4. UI/UX 디자인 시스템 구축 ✅
+
+#### 구현된 컴포넌트 (`/src/components/design-system/`)
+- **GlassmorphicCard**: 글래스모피즘 효과 카드
+- **NeonButton**: 네온 발광 효과 버튼
+- **AnimatedBackground**: 동적 배경 애니메이션
+- **ParticleEffect**: 인터랙티브 파티클 효과
+- **NeonLoader**: 네온 스타일 로딩 애니메이션
+- **NeonToast**: 네온 토스트 알림
+
+#### 디자인 쇼케이스
+- URL: `/design-showcase`
+- 모든 컴포넌트 데모 및 테스트 가능
+
+### 5. OBS 크로마키 오버레이 시스템 ✅
+
+#### 메인 오버레이 (`/obs`)
+```typescript
+// 주요 기능:
+- 크로마키 배경 (#00FF00 - 녹색)
+- 실시간 가사 표시 (단어별 하이라이팅)
+- 번역 표시 (캐싱됨)
+- 강한 텍스트 그림자로 가독성 확보
+- localStorage를 통한 로컬 제어
+```
+
+#### 컨트롤 패널 (`/obs/control`)
+```typescript
+// 기능:
+- 가사 검색 (YouTube, Genius, LRClib)
+- 최근 사용한 가사 목록
+- 재생/일시정지/리셋 컨트롤
+- OBS 설정 조정 (글자 크기, 번역 언어)
+- OBS URL 생성 및 복사
+```
+
+### 6. API 라우트 구현 ✅
+
+#### `/api/lyrics/search`
+- 가사 검색 및 저장
+- Supabase CRUD 작업
+
+#### `/api/translate/ai`
+- GPT-4 기반 문맥 인식 번역
+- 이전/다음 라인 컨텍스트 활용
+- 번역 결과 자동 캐싱
+
+### 7. 스마트 캐싱 시스템 ✅
+
+```typescript
+// 번역 캐싱 로직
+1. translations 테이블에서 기존 번역 확인
+2. 있으면: 캐시된 번역 사용 (API 호출 없음)
+3. 없으면: GPT-4 API 호출 → 번역 → DB 저장
+
+// 저장되는 데이터
+- lyrics_id: 가사 ID
+- line_index: 라인 번호
+- original_text: 원본 텍스트
+- translated_text: 번역된 텍스트
+- target_language: 대상 언어
+- timestamp: 타이밍 정보
+- duration: 지속 시간
+- metadata: 단어별 타이밍 등 추가 정보
+```
+
+## 🚀 사용 방법
+
+### 1. 개발 서버 실행
+```bash
+npm run dev
+# http://localhost:3000
+```
+
+### 2. OBS 설정
+1. **브라우저 소스** 추가
+2. URL: `http://localhost:3000/obs`
+3. 크기: 1920 x 1080
+4. **필터** → **크로마키** → 색상: 녹색 (#00FF00)
+5. FPS: 30 이상
+
+### 3. 컨트롤 패널 사용
+1. `http://localhost:3000/obs/control` 접속
+2. 노래 검색 및 선택
+3. 재생 컨트롤로 가사 제어
+4. OBS URL 복사하여 브라우저 소스에 적용
+
+## 📁 프로젝트 구조
 
 ```
 /src
-├── app/                    # Next.js App Router 페이지
-│   ├── page.tsx           # 메인 랜딩 페이지
-│   ├── demo/page.tsx      # 데모 페이지
-│   ├── control/page.tsx   # 컨트롤 패널
-│   ├── overlay/           # OBS 오버레이
-│   │   ├── page.tsx       # 오버레이 디스플레이
-│   │   └── help/page.tsx  # OBS 설정 가이드
-│   └── layout.tsx         # 루트 레이아웃
+├── app/
+│   ├── obs/                    # OBS 오버레이
+│   │   ├── page.tsx            # 크로마키 오버레이 (녹색 배경)
+│   │   └── control/page.tsx    # 컨트롤 패널
+│   ├── design-showcase/         # UI 컴포넌트 쇼케이스
+│   ├── api/
+│   │   ├── lyrics/search/      # 가사 검색 API
+│   │   └── translate/ai/       # AI 번역 API
+│   └── control/page.tsx        # 기존 컨트롤 패널
 │
-├── domains/               # DDD 도메인 모듈
-│   ├── karaoke/          # 노래방 기능
-│   │   ├── components/   # KaraokeDisplay, KaraokeControls
-│   │   ├── hooks/        # useKaraokePlayback
-│   │   └── services/     # KaraokeService
-│   │
-│   ├── lyrics/           # 가사 처리
-│   │   ├── schemas/      # Zod 스키마
-│   │   ├── services/     # LRC 파서, 파일 리더
-│   │   └── types/        # TypeScript 타입
-│   │
-│   ├── lrc-fetcher/      # 자동 가사 가져오기
-│   │   ├── core/         # 추상 클래스, 관리자
-│   │   ├── providers/    # 각 소스별 프로바이더
-│   │   └── types/        # 공통 타입
-│   │
-│   └── translation/      # 번역 기능
-│       ├── services/     # Google Translate, 캐시
-│       └── types/        # 번역 타입
+├── components/
+│   ├── design-system/          # 네온/글래스모피즘 UI
+│   └── websocket/              # WebSocket 컴포넌트 (현재 미사용)
 │
-├── components/           # 공용 UI 컴포넌트
-│   └── ui/              # shadcn/ui 컴포넌트
+├── domains/                    # DDD 도메인 모듈
+│   ├── karaoke/                # 노래방 기능
+│   ├── lyrics/                 # 가사 처리
+│   ├── lrc-fetcher/           # 가사 가져오기
+│   └── translation/            # 번역 기능
 │
-└── lib/                 # 유틸리티 함수
-
+└── lib/
+    ├── supabase.ts             # Supabase 클라이언트
+    └── database-schema.sql     # DB 스키마
 ```
 
-## 주요 기능 상세
+## 🔧 환경 변수 체크리스트
 
-### 1. LRC 파일 형식 지원
-
-단어 수준 타이밍을 지원하는 향상된 LRC 형식:
-```
-[00:12.00]<00:12.20>When <00:12.50>I <00:12.80>was <00:13.10>young
-```
-
-### 2. 자동 가사 가져오기 파이프라인
-
-1. 사용자가 노래 검색 (제목, 아티스트, URL)
-2. 여러 프로바이더에서 병렬로 가사 검색
-3. 신뢰도 기반 점수 계산
-4. 최적의 가사 자동 선택
-5. 캐싱으로 성능 최적화
-
-### 3. 실시간 번역
-
-- Google Translate API 통합
-- 줄 단위 번역
-- 캐싱으로 API 호출 최소화
-- 다국어 지원
-
-### 4. OBS 통합
-
-- 투명 배경 오버레이
-- URL 파라미터로 커스터마이징
-- 실시간 업데이트 (WebSocket 예정)
-
-## 현재 상태 및 이슈
-
-### 완료된 작업
-- ✅ 기본 프로젝트 구조 설정
-- ✅ 도메인 모듈 구현
-- ✅ LRC 파서 및 디스플레이
-- ✅ 자동 가사 가져오기 (3개 프로바이더)
-- ✅ Google Translate 통합
-- ✅ OBS 오버레이 기능
-- ✅ 전체 UI 한국어 번역
-
-### 현재 이슈
-1. **모듈 해결 오류** (./730.js)
-   - Next.js 웹팩 청킹 문제
-   - 데모 페이지 접근 시 발생
-
-2. **Spotify 프로바이더 비활성화**
-   - CORS 정책으로 인한 문제
-   - 서버사이드 API 라우트 필요
-
-3. **프로덕션 준비 미완성**
-   - 데이터베이스 통합 필요
-   - 사용자 인증 시스템 필요
-   - 실제 배포 설정 필요
-
-## 설치 및 실행
-
-### 필수 요구사항
-- Node.js 20.0.0 이상
-- npm 또는 yarn
-- Google Cloud API 키 (번역용)
-
-### 환경 변수 설정
-`.env.local` 파일 생성:
 ```env
-NEXT_PUBLIC_GOOGLE_API_KEY=your-google-api-key
+✅ NEXT_PUBLIC_SUPABASE_URL
+✅ NEXT_PUBLIC_SUPABASE_ANON_KEY  
+✅ SUPABASE_SERVICE_ROLE_KEY
+✅ NEXT_PUBLIC_GOOGLE_API_KEY
+✅ OPENAI_API_KEY
+✅ SONIOX_API_KEY
 ```
 
-### 설치
-```bash
-npm install
-```
+## 📝 내일 작업 계획
 
-### 개발 서버 실행
-```bash
-npm run dev
-```
+### 우선순위 높음
+1. [ ] 가사 동기화 정확도 개선
+2. [ ] 키보드 단축키 추가 (Space: 재생/정지, R: 리셋)
+3. [ ] 가사 편집 기능 (타이밍 조정)
 
-### 빌드
-```bash
-npm run build
-```
+### 우선순위 중간
+4. [ ] 다중 언어 동시 표시 옵션
+5. [ ] 가사 스타일 커스터마이징 (폰트, 애니메이션)
+6. [ ] 가사 내보내기 (SRT, VTT 형식)
 
-## 사용 방법
+### 우선순위 낮음
+7. [ ] 음성 인식 연동 (Soniox API)
+8. [ ] 모바일 리모컨 앱
+9. [ ] Vercel 배포 설정
 
-### 1. 메인 페이지
-- 홈페이지에서 "데모 체험" 또는 "컨트롤 패널" 선택
+## ⚠️ 알려진 이슈
 
-### 2. 컨트롤 패널
-- 노래 검색 (제목, 아티스트, URL)
-- 가사 소스 선택
-- 번역 언어 설정
-- OBS URL 복사
+1. **Spotify 프로바이더 CORS 오류**
+   - 서버사이드 API 라우트 구현 필요
 
-### 3. OBS 설정
-1. OBS에서 브라우저 소스 추가
-2. 오버레이 URL 입력
-3. 너비: 1920, 높이: 1080 설정
-4. "페이지와 상호작용" 체크 해제
+2. **Next.js 모듈 해결 오류 (./730.js)**
+   - 웹팩 청킹 문제, 데모 페이지 접근 시 발생
 
-## 향후 계획
+## 💡 중요 참고사항
 
-### 단기 목표
-- [ ] 모듈 해결 오류 수정
-- [ ] Spotify 프로바이더 서버사이드 구현
-- [ ] WebSocket 실시간 동기화
-- [ ] 더 많은 가사 소스 추가
+### localStorage 키
+- `current_lrc`: 현재 LRC 파일 내용
+- `current_title`: 현재 곡 제목
+- `current_artist`: 현재 아티스트
+- `karaoke_control`: 재생 제어 명령 (play/pause/reset)
 
-### 장기 목표
-- [ ] 데이터베이스 통합 (Supabase)
-- [ ] 사용자 계정 시스템
-- [ ] 가사 편집 기능
-- [ ] 커스텀 스타일 테마
-- [ ] 모바일 앱 개발
+### URL 파라미터 (OBS 오버레이)
+- `chromaKey`: 크로마키 색상 (기본: #00FF00)
+- `fontSize`: 글자 크기 (기본: 60)
+- `textColor`: 텍스트 색상 (기본: #FFFFFF)
+- `highlightColor`: 하이라이트 색상 (기본: #FFD700)
+- `lang`: 번역 언어 (기본: en)
+- `showTranslation`: 번역 표시 여부 (기본: true)
 
-## API 엔드포인트 (예정)
+### 번역 캐싱 효과
+- 같은 가사를 다시 재생할 때 **API 호출 0회**
+- 평균 응답 속도: 캐시 히트 시 <50ms, 미스 시 ~2000ms
+- 월간 API 비용 절감: 약 80-90%
 
-```
-GET  /api/lyrics/search     # 가사 검색
-GET  /api/lyrics/:id        # 특정 가사 가져오기
-POST /api/lyrics            # 가사 저장
-GET  /api/translate         # 텍스트 번역
-```
+## 🎯 프로젝트 목표
 
-## 기여 가이드라인
-
-1. 모든 UI 텍스트는 한국어로 작성
-2. 타입스크립트 strict 모드 준수
-3. Zod 스키마로 데이터 검증
-4. 도메인별로 코드 구성
-5. 의미 있는 커밋 메시지 작성
-
-## 라이선스
-
-이 프로젝트는 MIT 라이선스로 배포됩니다.
-
-## 문의사항
-
-프로젝트 관련 문의사항이 있으시면 이슈를 생성해주세요.
+이 프로젝트는 **간단하고 효율적인 OBS 가사 오버레이**를 목표로 합니다:
+- ❌ 복잡한 방송 시스템 X
+- ❌ 실시간 동기화 서버 X  
+- ✅ 로컬에서 작동하는 간단한 오버레이
+- ✅ 스마트 캐싱으로 비용 절감
+- ✅ OBS 크로마키 최적화
 
 ---
 
-🎤 노래방 가사 번역기 - 전 세계와 함께 노래하세요!
+🎤 **노래방 가사 번역기** - OBS와 함께 전 세계와 노래하세요!

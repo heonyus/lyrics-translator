@@ -6,7 +6,7 @@ import { useLyrics } from '@/domains/lyrics';
 import { SupportedLanguage, supportedLanguages, languageInfo } from '@/domains/translation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,10 @@ import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Search, Copy, ExternalLink, Settings, Monitor } from 'lucide-react';
 import { toast } from 'sonner';
+import { WebSocketControl } from '@/components/websocket/WebSocketControl';
+import { LyricsEditor } from '@/components/LyricsEditor';
+import { useImprovedLyrics } from '@/domains/lyrics/hooks/useImprovedLyrics';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 export default function ControlPage() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,7 +42,39 @@ export default function ControlPage() {
     fetchLRC,
   } = useLRCFetcher();
   
-  const { lyrics } = useLyrics();
+  const { 
+    lyrics, 
+    loadLRC,
+    loadParsedLRC,
+    playbackState,
+    play, 
+    pause,
+    seek,
+    reset,
+    togglePlayPause,
+    skipForward,
+    skipBackward,
+    setPlaybackRate,
+  } = useImprovedLyrics({
+    autoPlay: false,
+    targetFPS: 60,
+    interpolation: true,
+  });
+  
+  // 키보드 단축키 설정
+  useKeyboardShortcuts({
+    onPlayPause: togglePlayPause,
+    onReset: reset,
+    onSkipForward: () => skipForward(5),
+    onSkipBackward: () => skipBackward(5),
+    onStop: () => {
+      pause();
+      reset();
+    },
+    onSpeedUp: () => setPlaybackRate(Math.min(2, playbackState.playbackRate + 0.1)),
+    onSpeedDown: () => setPlaybackRate(Math.max(0.5, playbackState.playbackRate - 0.1)),
+    enabled: true,
+  });
   
   // Generate overlay URL
   const generateOverlayUrl = () => {
@@ -88,10 +124,12 @@ export default function ControlPage() {
       <h1 className="text-3xl font-bold mb-6">컨트롤 패널</h1>
       
       <Tabs defaultValue="search" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="search">검색 및 선택</TabsTrigger>
+          <TabsTrigger value="editor">가사 편집</TabsTrigger>
           <TabsTrigger value="settings">오버레이 설정</TabsTrigger>
           <TabsTrigger value="preview">미리보기 및 내보내기</TabsTrigger>
+          <TabsTrigger value="websocket">실시간 동기화</TabsTrigger>
         </TabsList>
         
         <TabsContent value="search" className="space-y-4">
@@ -328,6 +366,59 @@ export default function ControlPage() {
                   먼저 노래를 검색하고 선택해주세요
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        <TabsContent value="editor" className="space-y-4">
+          <LyricsEditor
+            lyrics={lyrics}
+            currentLineIndex={playbackState.currentLineIndex}
+            currentTime={playbackState.currentTime}
+            isPlaying={playbackState.isPlaying}
+            onUpdateLine={(lineIndex, updates) => {
+              // 라인 업데이트 처리
+              console.log('Line updated:', lineIndex, updates);
+            }}
+            onSave={(updatedLyrics) => {
+              // 전체 가사 저장
+              loadParsedLRC(updatedLyrics);
+              toast.success('가사가 저장되었습니다!');
+            }}
+            onSeek={seek}
+            onPlay={play}
+            onPause={pause}
+          />
+        </TabsContent>
+        
+        <TabsContent value="websocket" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>실시간 동기화</CardTitle>
+              <CardDescription>
+                여러 디바이스 간 가사를 실시간으로 동기화합니다
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <WebSocketControl 
+                currentLyricsId={selectedResult?.id}
+                onLyricsChange={(lyricsId) => {
+                  // 가사 변경 시 자동으로 로드
+                  if (lyricsId && lyrics) {
+                    loadParsedLRC(lyrics);
+                    toast.success('가사가 동기화되었습니다');
+                  }
+                }}
+              />
+              
+              <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <h4 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">사용 방법</h4>
+                <ol className="text-sm space-y-1 text-blue-800 dark:text-blue-200">
+                  <li>1. 방을 생성하거나 참여 코드를 입력하세요</li>
+                  <li>2. 호스트가 가사를 선택하면 모든 참가자에게 동기화됩니다</li>
+                  <li>3. 재생 컨트롤도 실시간으로 동기화됩니다</li>
+                </ol>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
