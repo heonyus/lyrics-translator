@@ -130,31 +130,31 @@ export async function POST(request: NextRequest) {
           });
         }),
       
-      // GPT-4o-mini (가성비 최고 모델)
-      searchWithGPT(searchArtist, artist, searchTitle, title)
-        .then(result => {
-          if (result) {
-            results.push({
-              ...result,
-              searchTime: (Date.now() - startTime) / 1000,
-              status: 'success',
-              preview: result.lyrics.split('\n').slice(0, 4).join('\n')
-            });
-          }
-        })
-        .catch(error => {
-          console.error('GPT-4o-mini error:', error);
-          results.push({
-            lyrics: '',
-            source: 'AI-GPT4o-mini',
-            confidence: 0,
-            title,
-            artist,
-            searchTime: (Date.now() - startTime) / 1000,
-            status: 'failed',
-            error: error.message
-          });
-        }),
+      // GPT-4o-mini (가성비 최고 모델) - 현재 쿼터 초과로 비활성화
+      // searchWithGPT(searchArtist, artist, searchTitle, title)
+      //   .then(result => {
+      //     if (result) {
+      //       results.push({
+      //         ...result,
+      //         searchTime: (Date.now() - startTime) / 1000,
+      //         status: 'success',
+      //         preview: result.lyrics.split('\n').slice(0, 4).join('\n')
+      //       });
+      //     }
+      //   })
+      //   .catch(error => {
+      //     console.error('GPT-4o-mini error:', error);
+      //     results.push({
+      //       lyrics: '',
+      //       source: 'AI-GPT4o-mini',
+      //       confidence: 0,
+      //       title,
+      //       artist,
+      //       searchTime: (Date.now() - startTime) / 1000,
+      //       status: 'failed',
+      //       error: error.message
+      //     });
+      //   }),
       
       // Tavily
       searchWithTavily(searchArtist, artist, searchTitle, title)
