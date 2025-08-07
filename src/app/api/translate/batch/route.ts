@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { logger, APITimer } from '@/lib/logger';
 
 // API configuration
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+let GROQ_API_KEY: string | undefined;
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+let GOOGLE_API_KEY: string | undefined;
 
 export async function POST(request: NextRequest) {
   try {
+    const overallTimer = new APITimer('Batch Translate');
+    const overallStart = Date.now();
+    if (typeof window === 'undefined') {
+      const { getSecret } = await import('@/lib/secure-secrets');
+      GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY || '';
+      GOOGLE_API_KEY = (await getSecret('google')) || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    }
     const { lines, targetLanguage, context } = await request.json();
     
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
@@ -52,6 +60,7 @@ export async function POST(request: NextRequest) {
     
     // Try Groq first
     try {
+      logger.api('Groq Translate', 'start', `Target=${targetLang} Lines=${lines.length}`);
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -63,19 +72,21 @@ export async function POST(request: NextRequest) {
           messages: [
             {
               role: 'system',
-              content: 'You are a professional lyrics translator. Translate each line accurately while preserving the poetic and emotional qualities. Return only the translations, numbered in the same format as the input.'
+              content: [
+                {
+                  type: 'text',
+                  text: `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
+                }
+              ]
             },
             {
               role: 'user',
-              content: `${context ? `Context: This is from the song "${context.title}" by "${context.artist}".` : ''}
+              content: `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
 
-Translate the following lyrics to ${targetLang}. 
-Keep the emotional tone and poetic feel of the original lyrics.
-Translate line by line, maintaining the structure.
-Return ONLY the translations, one per line, in the same order as the input.
+Translate the following lyrics to ${targetLang}.
+Return ONLY the translations, one per line, in the same order as input, numbered 1-${lines.length}.
 
-Original lyrics:
-${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
             }
           ],
           temperature: 0.3,
@@ -85,7 +96,7 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
 
       if (!response.ok) {
         const error = await response.text();
-        console.error('Groq API error:', error);
+        logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
         throw new Error(`Groq API error: ${response.status}`);
       }
 
@@ -109,6 +120,8 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
         translations.push('...');
       }
 
+      logger.api('Groq Translate', 'success', `Lines=${lines.length}`);
+      logger.summary(1, 1, Date.now() - overallStart);
       return NextResponse.json({
         success: true,
         translations: translations.slice(0, lines.length),
@@ -119,7 +132,7 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
       });
 
     } catch (groqError) {
-      console.error('Groq API failed, trying Gemini 2.5 Flash:', groqError);
+      logger.api('Groq Translate', 'fail', 'Primary provider failed, trying Gemini');
       
       // Fallback to Gemini 2.5 Flash
       try {
@@ -131,16 +144,11 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         // Try batch translation first
-        const batchPrompt = `${context ? `Context: This is from the song "${context.title}" by "${context.artist}".` : ''}
+        const batchPrompt = `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
 
-Translate these lyrics to ${targetLang}.
-Keep the emotional tone and poetic feel.
-Each line should be translated separately - do NOT repeat the same translation.
-Return ONLY the translations, numbered 1-${lines.length}.
-
-Original lyrics:
-${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`;
+Translate the lyrics to ${targetLang}.\nRules:\n- Keep the same number of lines.\n- Preserve names and punctuation.\n- No commentary.\n- Return ONLY translations, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`;
         
+        logger.api('Gemini Translate (Batch)', 'start', `Lines=${lines.length}`);
         const result = await model.generateContent(batchPrompt);
         const response = await result.response;
         const translationText = response.text().trim();
@@ -154,21 +162,16 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`;
         // Check for duplicate translations (common error)
         const uniqueTranslations = [...new Set(translations)];
         if (uniqueTranslations.length === 1 && lines.length > 1) {
-          console.warn('Gemini returned identical translations, translating individually...');
+          logger.api('Gemini Translate (Batch)', 'fail', 'Identical translations');
           
           // Translate each line individually to avoid repetition
           translations = [];
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             try {
-              const individualPrompt = `Translate this single song lyric line to ${targetLang}.
-Keep the poetic and emotional tone.
-${i > 0 ? `Previous line translation: "${translations[i-1]}"` : ''}
-
-Original line: "${line}"
-
-Return ONLY the translation, nothing else:`;
+              const individualPrompt = `Translate this single lyric line to ${targetLang}.\n- Keep poetic tone\n- No commentary\n- Return ONLY the translation\n\nLine: "${line}"`;
               
+              logger.api('Gemini Line', 'start', `#${i + 1}`);
               const individualResult = await model.generateContent(individualPrompt);
               const individualResponse = await individualResult.response;
               const translation = individualResponse.text().trim();
@@ -176,13 +179,16 @@ Return ONLY the translation, nothing else:`;
               // Remove quotes if present
               const cleanTranslation = translation.replace(/^["']|["']$/g, '').trim();
               translations.push(cleanTranslation);
+              logger.api('Gemini Line', 'success', `#${i + 1}`);
               
             } catch (individualError) {
-              console.error(`Failed to translate line ${i + 1}:`, individualError);
+              logger.api('Gemini Line', 'fail', `#${i + 1}`);
               translations.push(line); // Use original if individual translation fails
             }
           }
           
+          logger.api('Gemini Translate (Batch)', 'success', `Lines=${lines.length} (individual mode)`);
+          logger.summary(lines.length, translations.filter(t => !!t).length, Date.now() - overallStart);
           return NextResponse.json({
             success: true,
             translations: translations,
@@ -199,6 +205,8 @@ Return ONLY the translation, nothing else:`;
           translations.push('...');
         }
         
+        logger.api('Gemini Translate (Batch)', 'success', `Lines=${lines.length}`);
+        logger.summary(1, 1, Date.now() - overallStart);
         return NextResponse.json({
           success: true,
           translations: translations.slice(0, lines.length),
@@ -209,7 +217,7 @@ Return ONLY the translation, nothing else:`;
         });
         
       } catch (geminiError) {
-        console.error('Both Groq and Gemini failed:', geminiError);
+        logger.api('Gemini Translate (Batch)', 'fail', 'Fallback failed');
         
         // Last fallback: simple translation
         const simpleTranslations = lines.map(line => {
@@ -224,6 +232,7 @@ Return ONLY the translation, nothing else:`;
           return line;
         });
         
+        logger.summary(1, 0, Date.now() - overallStart);
         return NextResponse.json({
           success: true,
           translations: simpleTranslations,
@@ -236,7 +245,7 @@ Return ONLY the translation, nothing else:`;
     }
     
   } catch (error) {
-    console.error('[Batch Translation] Error:', error);
+    logger.error('[Batch Translation] Error', error);
     return NextResponse.json(
       { 
         success: false, 

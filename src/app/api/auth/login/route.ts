@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// 허용된 비밀번호 목록 (환경 변수로 관리하거나 하드코딩)
-const ALLOWED_PASSWORDS = process.env.ALLOWED_PASSWORDS?.split(',') || [
-  'heonyus2025',  // 기본 비밀번호
-  'admin123',     // 관리자용
-  'guest2025'     // 게스트용
-];
+// 허용된 비밀번호 목록 (환경 변수 필수)
+const ALLOWED_PASSWORDS = process.env.ALLOWED_PASSWORDS?.split(',') || [];
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,8 +14,8 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // 비밀번호 확인
-    if (ALLOWED_PASSWORDS.includes(password)) {
+    // 비밀번호 확인 (환경변수 미설정 시 거부)
+    if (ALLOWED_PASSWORDS.length > 0 && ALLOWED_PASSWORDS.includes(password)) {
       // 쿠키 설정
       const response = NextResponse.json({ success: true });
       response.cookies.set('auth', password, {
