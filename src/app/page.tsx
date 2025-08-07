@@ -98,6 +98,100 @@ export default function MobileDashboard() {
     }
   }, []);
 
+  // Normalize various API response shapes into a common result array
+  const adaptResults = (name: string, data: any): any[] => {
+    try {
+      if (!data) return [];
+      if (Array.isArray(data.results) && data.results.length > 0) return data.results;
+      if (data.bestResult && data.bestResult.lyrics) return [data.bestResult];
+      if (data.result && data.result.lyrics) return [data.result];
+      if (data.lyrics) return [data];
+      return [];
+    } catch { return []; }
+  };
+
+  // Run multiple providers concurrently and append results as soon as they arrive
+  const parallelSearch = async (artist: string, title: string, query: string, forceRefresh = false) => {
+    const controllers: AbortController[] = [];
+    const addController = () => { const c = new AbortController(); controllers.push(c); return c; };
+    const enqueue = (arr: any[]) => {
+      if (arr && arr.length > 0) {
+        setSearchResults(prev => {
+          // dedupe by lyrics+source key
+          const seen = new Set(prev.map((r: any) => `${r.source}|${(r.lyrics||'').slice(0,50)}`));
+          const merged = [...prev];
+          for (const r of arr) {
+            const key = `${r.source||'unknown'}|${String(r.lyrics||'').slice(0,50)}`;
+            if (!seen.has(key)) merged.push(r);
+          }
+          return merged;
+        });
+      }
+    };
+
+    const tasks: Array<Promise<void>> = [];
+    // smart-scraper-v3
+    tasks.push((async () => {
+      const c = addController();
+      try {
+        const res = await fetch('/api/lyrics/smart-scraper-v3', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, forceRefresh }), signal: c.signal });
+        const json = await res.json().catch(()=>null);
+        enqueue(adaptResults('v3', json));
+      } catch {}
+    })());
+    // korean scrapers
+    tasks.push((async () => {
+      const c = addController();
+      try {
+        const res = await fetch('/api/lyrics/korean-scrapers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
+        const json = await res.json().catch(()=>null);
+        enqueue(adaptResults('kr', json));
+      } catch {}
+    })());
+    // llm-search
+    tasks.push((async () => {
+      const c = addController();
+      try {
+        const res = await fetch('/api/lyrics/llm-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
+        const json = await res.json().catch(()=>null);
+        enqueue(adaptResults('llm', json));
+      } catch {}
+    })());
+    // gemini-search
+    tasks.push((async () => {
+      const c = addController();
+      try {
+        const res = await fetch('/api/lyrics/gemini-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
+        const json = await res.json().catch(()=>null);
+        enqueue(adaptResults('gemini', json));
+      } catch {}
+    })());
+    // search-engine
+    tasks.push((async () => {
+      const c = addController();
+      try {
+        const res = await fetch('/api/lyrics/search-engine', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title, engine: 'auto' }), signal: c.signal });
+        const json = await res.json().catch(()=>null);
+        enqueue(adaptResults('engine', json));
+      } catch {}
+    })());
+
+    // Wait until at least one result arrives or all tasks settle
+    const timeout = new Promise<void>(r => setTimeout(r, 8000));
+    await Promise.race([
+      (async () => {
+        while (true) {
+          await new Promise(r => setTimeout(r, 200));
+          if ((searchResults as any[]).length > 0) break;
+        }
+      })(),
+      timeout
+    ]);
+    // Allow remaining tasks to finish in background (no blocking)
+    Promise.allSettled(tasks).then(()=>{});
+    return () => controllers.forEach(c => c.abort());
+  };
+
   // Quick search
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -131,29 +225,10 @@ export default function MobileDashboard() {
       
       console.log(`Searching for: ${artist} - ${title}`);
       
-      // Use Smart Scraper V3 with LLM parsing
-      const response = await fetch('/api/lyrics/smart-scraper-v3', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          query: searchQuery,
-          forceRefresh: false
-        })
-      });
-      
-      const data = await response.json();
-      
-      // Handle both success and partial success
-      if (data.results && data.results.length > 0) {
-        // Show results even if response had error
-        setSearchResults(data.results);
-        toast.success(`${data.results.length}개의 검색 결과를 찾았습니다`);
-      } else if (response.ok && data.success) {
-        // Success but no results
-        toast.error('검색 결과가 없습니다');
-      } else {
-        // Complete failure
-        toast.error(data.error || '검색 실패');
+      // Fire providers in parallel and append as they arrive
+      await parallelSearch(artist, title, searchQuery, false);
+      if ((searchResults as any[]).length > 0) {
+        toast.success('첫 결과를 가져왔습니다');
       }
     } catch (error) {
       toast.error('검색 실패');
@@ -195,26 +270,8 @@ export default function MobileDashboard() {
     setSearchResults([]);
     
     try {
-      const response = await fetch('/api/lyrics/smart-scraper-v3', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          query,
-          forceRefresh: true // Force refresh to get new results
-        })
-      });
-      
-      const data = await response.json();
-      
-      // Handle both success and partial success
-      if (data.results && data.results.length > 0) {
-        setSearchResults(data.results);
-        toast.success(`재검색 완료: ${data.results.length}개 결과`);
-      } else if (response.ok && data.success) {
-        toast.error('재검색 결과가 없습니다');
-      } else {
-        toast.error(data.error || '재검색 실패');
-      }
+      await parallelSearch(currentSong.artist || searchQuery.split(' - ')[0] || '', currentSong.title || searchQuery.split(' - ')[1] || '', query, true);
+      if ((searchResults as any[]).length > 0) toast.success('재검색: 첫 결과 도착');
     } catch (error) {
       toast.error('재검색 실패');
     } finally {
