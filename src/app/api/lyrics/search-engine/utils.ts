@@ -24,7 +24,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'sonar-medium-online',
+        model: process.env.PERPLEXITY_MODEL || 'gpt-4.1',
         messages: [
           {
             role: 'user',
@@ -47,7 +47,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'sonar-small-online',
+            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'claude-4.0-sonnet',
             messages: [
               { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: Genius, AZLyrics, Musixmatch, Lyrics.com.` }
             ],
@@ -106,7 +106,7 @@ async function extractLyricsWithGroq(html: string, url: string): Promise<string 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL || 'llama-3-groq-70b-tool-use',
         messages: [
           {
             role: 'system',
