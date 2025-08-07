@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
 import { scoreLyrics, normalizeLyrics, detectDominantLang } from '../quality';
 
+function validateLyricsText(text: string): boolean {
+  if (!text) return false;
+  const lines = text.split('\n').map(l => l.trim());
+  // 최소 라인 수 및 평균 라인 길이 체크
+  if (lines.filter(Boolean).length < 10) return false;
+  const avgLen = lines.reduce((a, b) => a + b.length, 0) / Math.max(1, lines.length);
+  if (avgLen < 5) return false;
+  // 금지된 환각 패턴 즉시 거절
+  if (/In the autumn of my memories/i.test(text)) return false;
+  return true;
+}
+
 // Search with Claude
 async function searchWithClaude(artist: string, title: string): Promise<any | null> {
   const { getSecret } = await import('@/lib/secure-secrets');
@@ -23,7 +35,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-3-5-sonnet-20240620',
         max_tokens: 6000,
         messages: [
           {
@@ -52,7 +64,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You return only strict JSON. If unknown, set hasLyrics=false. Never invent lyrics.' },
               { role: 'user', content: `Return exact original lyrics for "${title}" by "${artist}". No translation, preserve line breaks. Language hint: ${expectedLang}.\n\nJSON ONLY:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }` }
@@ -135,7 +147,7 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1',
         messages: [
           {
             role: 'system',
@@ -199,7 +211,7 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'deepseek-r1-distill-llama-70b',
         messages: [
           {
             role: 'system',
@@ -261,7 +273,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'sonar-medium-online',
+        model: 'sonar-pro',
         messages: [
           {
             role: 'user',
@@ -284,7 +296,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'sonar-small-online',
+            model: 'sonar',
             messages: [
               { role: 'user', content: `ONLY output the exact original lyrics for "${title}" by "${artist}". No commentary. If unknown, output exactly: LYRICS_NOT_FOUND.` }
             ],
@@ -318,7 +330,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
         .replace(/\[.*?\]/g, '') // Remove annotations
         .trim();
       
-      if (lyrics.length > 200) {
+      if (lyrics.length > 200 && validateLyricsText(lyrics)) {
         timer.success(`Found lyrics: ${lyrics.length} chars`);
         return {
           artist,
@@ -386,6 +398,18 @@ export async function POST(request: NextRequest) {
     });
     validResults.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
     
+    // 품질이 낮거나 결과가 없는 경우 Search Engine으로 폴백(스크래핑 기반, 환각 방지)
+    if (validResults.length === 0 || (validResults[0]._quality || 0) < 0.6) {
+      try {
+        const { searchEngine } = await import('../search-engine/utils');
+        const se = await searchEngine({ artist, title, engine: 'perplexity' });
+        if (se?.success && se.result) {
+          timer.success('Fallback via Search Engine');
+          return NextResponse.json(se);
+        }
+      } catch {}
+    }
+
     timer.success(`Found ${validResults.length} results`);
     
     // Add metadata to results
