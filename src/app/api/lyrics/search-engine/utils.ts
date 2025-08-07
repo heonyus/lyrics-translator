@@ -1,4 +1,5 @@
 import { logger, APITimer } from '@/lib/logger';
+import { detectDominantLang } from '../quality';
 
 let PERPLEXITY_API_KEY: string | undefined;
 let GROQ_API_KEY: string | undefined;
@@ -15,7 +16,15 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
   await loadKeys();
   
   try {
-    const query = `${artist} ${title} lyrics site:genius.com OR site:azlyrics.com OR site:lyrics.com OR site:musixmatch.com`;
+    const lang = detectDominantLang(`${artist} ${title}`);
+    const providers = (
+      lang === 'ko'
+        ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
+        : lang === 'ja'
+        ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
+        : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
+    );
+    const query = `${artist} ${title} lyrics site:${providers.join(' OR site:')}`;
     
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
@@ -28,7 +37,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         messages: [
           {
             role: 'user',
-            content: `Return only canonical lyrics page URLs for "${artist} - ${title}".\nRules:\n- Providers: Genius, AZLyrics, Musixmatch, Lyrics.com.\n- One URL per line.\n- No duplicates, no commentary, no markdown.\n- Prefer exact song page (not search pages).`
+            content: `Return only canonical lyrics page URLs for "${artist} - ${title}".\nRules:\n- Providers: ${providers.join(', ')}.\n- One URL per line.\n- No duplicates, no commentary, no markdown.\n- Prefer exact song page (not search pages).\n- Exclude URLs containing ?q=, /search, /tag, /category, or artist hubs.`
           }
         ],
         temperature: 0.1,
@@ -49,7 +58,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
           body: JSON.stringify({
             model: process.env.PERPLEXITY_MODEL_FALLBACK || 'claude-4.0-sonnet',
             messages: [
-              { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: Genius, AZLyrics, Musixmatch, Lyrics.com.` }
+              { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: ${providers.join(', ')}. Exclude search pages.` }
             ],
             temperature: 0.1,
             max_tokens: 500
@@ -153,7 +162,7 @@ async function fetchAndExtractLyrics(url: string): Promise<any | null> {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8'
       }
     });
     
@@ -236,7 +245,7 @@ export async function searchEngine({
     logger.info(`📍 Found ${urls.length} potential URLs`);
     
     // Step 2: Fetch and extract lyrics from each URL
-    const fetchPromises = urls.slice(0, 3).map(url => fetchAndExtractLyrics(url));
+    const fetchPromises = urls.slice(0, 5).map(url => fetchAndExtractLyrics(url));
   const results = [] as any[];
   for (const p of fetchPromises) {
     results.push(await p);
