@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
-    const { text, targetLang = 'ko', sourceLang = 'auto', userApiKeys } = await request.json();
+    const { text, targetLang = 'ko', sourceLang = 'auto', context = {} } = await request.json();
     
     if (!text) {
       return NextResponse.json({ success: false, error: 'Text is required' }, { status: 400 });
     }
     
-    // 먼저 OpenAI GPT-4o-mini 시도 (더 자연스러운 번역)
-    if (OPENAI_API_KEY) {
+    // 먼저 Gemini API 시도 (가사에 최적화된 번역)
+    if (GOOGLE_API_KEY) {
       try {
         const langNames = {
           ko: 'Korean',
@@ -24,56 +24,42 @@ export async function POST(request: NextRequest) {
         };
         
         const targetLangName = langNames[targetLang as keyof typeof langNames] || targetLang;
+        const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
         
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: `You are an expert translator specializing in song lyrics and poetry. 
+        const prompt = `
+Translate this song lyric to ${targetLangName}.
 
-Your task is to translate lyrics to ${targetLangName} while:
-1. Preserving the emotional tone and mood
-2. Maintaining poetic rhythm when possible
-3. Keeping cultural nuances and metaphors
-4. Using natural, singable expressions in the target language
+Original lyric: "${text}"
 
-For K-pop or J-pop songs, preserve any intentional language mixing.
-Return ONLY the translation, no explanations or notes.`
-              },
-              {
-                role: 'user',
-                content: `Translate this song lyric line to ${targetLangName}:\n\n${text}`
-              }
-            ],
-            temperature: 0.4,
-            max_tokens: 500
-          })
-        });
+${context?.previousLine ? `Previous line: "${context.previousLine}"` : ''}
+${context?.nextLine ? `Next line: "${context.nextLine}"` : ''}
+
+Translation requirements:
+- Preserve emotional tone and mood
+- Keep it natural and singable in ${targetLangName}
+- For K-pop/J-pop: preserve romanized names and artistic English phrases
+- Don't over-translate cultural references
+
+Return ONLY the translated text:`;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const translation = response.text().trim();
         
-        if (response.ok) {
-          const data = await response.json();
+        if (translation) {
           return NextResponse.json({
             success: true,
-            translation: data.choices[0].message.content.trim(),
-            source: 'GPT-4o-mini'
+            translation,
+            source: 'Gemini Pro'
           });
-        } else {
-          const errorData = await response.text();
-          console.error('OpenAI API Error:', response.status, errorData);
         }
       } catch (error) {
-        console.error('OpenAI translate error:', error);
+        console.error('Gemini translate error:', error);
       }
     }
     
-    // GPT-4o-mini가 실패하면 Google Translate 시도
+    // Gemini가 실패하면 Google Translate Basic API 시도 (백업)
     if (GOOGLE_API_KEY) {
       try {
         const response = await fetch(
@@ -84,7 +70,8 @@ Return ONLY the translation, no explanations or notes.`
             body: JSON.stringify({
               q: text,
               target: targetLang,
-              source: sourceLang === 'auto' ? undefined : sourceLang
+              source: sourceLang === 'auto' ? undefined : sourceLang,
+              format: 'text'
             })
           }
         );
@@ -94,7 +81,7 @@ Return ONLY the translation, no explanations or notes.`
           return NextResponse.json({
             success: true,
             translation: data.data.translations[0].translatedText,
-            source: 'Google Translate'
+            source: 'Google Translate (Backup)'
           });
         }
       } catch (error) {

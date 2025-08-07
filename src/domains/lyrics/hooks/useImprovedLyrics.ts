@@ -80,6 +80,8 @@ export function useImprovedLyrics(options: UseImprovedLyricsOptions = {}): UseIm
   const parserRef = useRef(new LRCParser());
   const lastFrameTimeRef = useRef<number>(0);
   const frameDropCountRef = useRef<number>(0);
+  const lastLineIndexRef = useRef<number>(-1);
+  const lastWordIndexRef = useRef<number>(-1);
   
   // Performance monitoring
   const performanceMonitorRef = useRef({
@@ -157,14 +159,14 @@ export function useImprovedLyrics(options: UseImprovedLyricsOptions = {}): UseIm
       ? currentTime + (frameTime * playbackState.playbackRate * 0.5)
       : currentTime;
     
-    // Find current line with lookahead
-    const lineIndex = findClosestLine(lyrics.lines, interpolatedTime);
+    // Find current line with lookahead and last index optimization
+    const lineIndex = findClosestLine(lyrics.lines, interpolatedTime, lastLineIndexRef.current);
     const line = lyrics.lines[lineIndex];
     
-    // Find current word within the line
+    // Find current word within the line with last index optimization
     let wordIndex = -1;
     if (line && line.words.length > 0) {
-      wordIndex = findCurrentWord(line.words, interpolatedTime);
+      wordIndex = findCurrentWord(line.words, interpolatedTime, lastWordIndexRef.current);
     }
     
     // Update state if changed
@@ -174,6 +176,10 @@ export function useImprovedLyrics(options: UseImprovedLyricsOptions = {}): UseIm
       const hasTimeChanged = Math.abs(prev.currentTime - currentTime) > 0.01;
       
       if (hasLineChanged || hasWordChanged || hasTimeChanged) {
+        // Update last indices for optimization
+        lastLineIndexRef.current = lineIndex;
+        lastWordIndexRef.current = wordIndex;
+        
         // Trigger callbacks
         if (hasLineChanged) {
           onLineChange?.(line, lineIndex);
@@ -333,6 +339,8 @@ export function useImprovedLyrics(options: UseImprovedLyricsOptions = {}): UseIm
     pausedTimeRef.current = 0;
     lastFrameTimeRef.current = 0;
     frameDropCountRef.current = 0;
+    lastLineIndexRef.current = -1;
+    lastWordIndexRef.current = -1;
     
     setPlaybackState({
       isPlaying: false,

@@ -43,33 +43,30 @@ export class SpotifyProvider extends BaseProvider {
   }
   
   protected async checkAvailability(): Promise<boolean> {
-    // Spotify provider는 CORS 문제로 인해 일시적으로 비활성화
-    return false;
-    
-    // TODO: API route를 통해 서버사이드에서 호출하도록 수정 필요
-    // try {
-    //   await this.ensureToken();
-    //   return this.token !== null;
-    // } catch {
-    //   return false;
-    // }
+    // Now using server-side API route
+    return true;
   }
   
   async searchLRC(query: SongQuery): Promise<LRCSearchResult[]> {
     this.updateRequestTime();
     
     try {
-      await this.ensureToken();
+      // Use server-side API route to avoid CORS
+      const searchQuery = query.title + (query.artist ? ` ${query.artist}` : '');
+      const params = new URLSearchParams({
+        q: searchQuery,
+        type: 'track',
+        limit: '10'
+      });
       
-      // If we have a Spotify track ID, use it directly
-      if (query.spotifyId) {
-        const metadata = await this.getTrackMetadata(query.spotifyId);
-        return [this.mapToSearchResult(metadata, query)];
+      const response = await fetch(`/api/spotify/search?${params}`);
+      
+      if (!response.ok) {
+        throw new Error('Spotify search failed');
       }
       
-      // Otherwise, search for the track
-      const searchResults = await this.searchTracks(query);
-      return searchResults;
+      const data = await response.json();
+      return data.results || [];
     } catch (error) {
       console.error('Spotify search error:', error);
       return [];

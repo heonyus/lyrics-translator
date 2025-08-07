@@ -31,6 +31,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- RLS 정책 설정 (ai_lyrics_cache)
+ALTER TABLE ai_lyrics_cache ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자 읽기 허용
+CREATE POLICY "Allow public read ai_cache" ON ai_lyrics_cache
+  FOR SELECT USING (true);
+
+-- 모든 사용자 쓰기 허용
+CREATE POLICY "Allow public insert ai_cache" ON ai_lyrics_cache
+  FOR INSERT WITH CHECK (true);
+
+-- 모든 사용자 업데이트 허용
+CREATE POLICY "Allow public update ai_cache" ON ai_lyrics_cache
+  FOR UPDATE USING (true);
+
 -- song_patterns 테이블 (학습 기반 타이밍)
 CREATE TABLE IF NOT EXISTS song_patterns (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getCachedValue, setCachedValue, createCacheKey } from '@/lib/cache/memory-cache';
 
 // 서버사이드 환경변수
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || process.env.perplexity_api_key || '';
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.tavily_api_key || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.claude_api_key || '';
 
 // API 키 확인 로그 (디버깅용)
 if (!OPENAI_API_KEY) {
@@ -154,33 +155,7 @@ export async function POST(request: NextRequest) {
       //       status: 'failed',
       //       error: error.message
       //     });
-      //   }),
-      
-      // Tavily
-      searchWithTavily(searchArtist, artist, searchTitle, title)
-        .then(result => {
-          if (result) {
-            results.push({
-              ...result,
-              searchTime: (Date.now() - startTime) / 1000,
-              status: 'success',
-              preview: result.lyrics.split('\n').slice(0, 4).join('\n')
-            });
-          }
-        })
-        .catch(error => {
-          console.error('Tavily error:', error);
-          results.push({
-            lyrics: '',
-            source: 'AI-Tavily',
-            confidence: 0,
-            title,
-            artist,
-            searchTime: (Date.now() - startTime) / 1000,
-            status: 'failed',
-            error: error.message
-          });
-        })
+      //   })
     ];
     
     // 모든 검색 완료 대기
@@ -210,59 +185,79 @@ export async function POST(request: NextRequest) {
 
 // 기존 검색 함수들 재사용 (간소화된 버전)
 async function searchWithPerplexity(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string) {
-  const systemPrompt = `You are an expert lyrics search specialist with access to global music databases.
+  const systemPrompt = `You are a professional lyrics database expert. Follow this strict Chain of Thought process:
 
-## YOUR TASK (Chain of Thought Process):
+## CHAIN OF THOUGHT PROCESS:
 
-Step 1: IDENTIFY the song
-- Check if artist "${searchArtist}" or "${originalArtist}" exists
-- Korean artists often have English stage names (e.g., 샘킴 = Sam Kim, 아이유 = IU)
-- Song title might be in Korean "${originalTitle}" or English "${searchTitle}"
+### Step 1: IDENTIFY THE LANGUAGE AND ORIGIN
+Think carefully:
+- Artist "${originalArtist}" or "${searchArtist}"
+- Is this a Korean artist? (샘킴, 아이유, 방탄소년단, etc.)
+- Is this a Japanese artist? (YOASOBI, 米津玄師, etc.)
+- Is this a Chinese artist? (周杰倫, 鄧紫棋, etc.)
+- What language should the lyrics be in?
 
-Step 2: SEARCH for exact lyrics
-- Search music databases (Genius, Melon, Bugs, etc.)
-- Find the COMPLETE official lyrics
-- Verify it's the correct song
+### Step 2: DETERMINE CORRECT SCRIPT
+Critical thinking:
+- Korean songs MUST be in 한글 (NOT romanized)
+- Japanese songs MUST be in 日本語 (ひらがな/カタカナ/漢字)
+- Chinese songs MUST be in 中文
+- English songs in English
 
-Step 3: RETURN the result
-- If found: Return ONLY the complete lyrics text
-- If not found: Return exactly "LYRICS_NOT_FOUND"
-- NO explanations, NO markdown, NO commentary
+### Step 3: SEARCH AND VERIFY
+Search process:
+- Search in Genius, Melon, Bugs, QQ Music, NetEase
+- Find the ORIGINAL lyrics
+- Verify it matches the artist and title
 
-## FEW-SHOT EXAMPLES:
+### Step 4: RETURN COMPLETE LYRICS
+Return format:
+- Complete lyrics in ORIGINAL language/script
+- All verses, choruses, bridges
+- Proper line breaks
 
-Example 1 - Korean Song (Success):
-User: Find lyrics for "샘킴" - "Make Up"
-Assistant: I'm speeding to you, call me
-I'm on the way 밤새 내 맘이
-어디로 가는지도 모른 채
-혹시 나 너무 보고 싶어서
-[... complete lyrics ...]
+## DETAILED FEW-SHOT EXAMPLES:
 
-Example 2 - Korean Artist with English Song (Success):
-User: Find lyrics for "IU" - "Good Day"
-Assistant: 어제처럼 오늘도
-무거운 공기가 나를 감싸고
-이유 없이 쏟아지는 빗물처럼
-내 마음도 답답해
-[... complete lyrics ...]
+Example 1 - Korean Song (Korean Script):
+Input: "샘킴" - "Make Up"
+Thought: Sam Kim is a Korean artist. This song should be in Korean.
+Output: [Korean lyrics in 한글 script]
+나도 모르게 시작된 내 마음이
+[... rest in Korean ...]
 
-Example 3 - Not Found:
-User: Find lyrics for "Unknown Artist" - "Fake Song 123"
-Assistant: LYRICS_NOT_FOUND
+Example 2 - Japanese Song (Japanese Script):
+Input: "YOASOBI" - "夜に駆ける"
+Thought: YOASOBI is a Japanese group. Must return in Japanese script.
+Output: [Japanese lyrics in original script]
+沈むように溶けてゆくように
+[... rest in Japanese ...]
 
-Example 4 - English Name of Korean Artist (Success):
-User: Find lyrics for "Sam Kim" - "Make Up"
-Assistant: I'm speeding to you, call me
-I'm on the way 밤새 내 맘이
-[... same as Example 1 ...]
+Example 3 - Korean Artist English Title (Still Korean):
+Input: "아이유" - "Good Day"
+Thought: IU is Korean. Even with English title, lyrics are Korean.
+Output: [Korean lyrics]
+어제처럼 오늘도
+[... rest in Korean ...]
 
-## CRITICAL RULES:
-1. Return COMPLETE lyrics (all verses, choruses, bridges)
-2. Preserve original language (Korean songs in Korean, English in English)
-3. Maintain exact line breaks and formatting
-4. NO additions like [Verse 1], [Chorus] unless originally in the lyrics
-5. If unsure or can't find: Return "LYRICS_NOT_FOUND"`;
+Example 4 - Romanized Input (Return Original):
+Input: "Sam Kim" - "Make Up"
+Thought: Sam Kim = 샘킴. Must return Korean lyrics, not romanized.
+Output: [Same as Example 1, in Korean]
+
+Example 5 - Chinese Song:
+Input: "周杰倫" - "七里香"
+Thought: Jay Chou is Chinese. Return in Chinese characters.
+Output: [Chinese lyrics]
+窗外的麻雀在電線桿上多嘴
+[... rest in Chinese ...]
+
+## ABSOLUTE RULES:
+1. NEVER return romanization (no "nado moreuge" for Korean)
+2. NEVER return pronunciation guides or phonetics
+3. ALWAYS use original script (한글/日本語/中文)
+4. Return COMPLETE lyrics (every line)
+5. If not found: Return "LYRICS_NOT_FOUND"
+6. NO markdown formatting, NO explanations`;
 
   const userPrompt = `Find the complete lyrics for:
 Artist: "${searchArtist}" (Korean: "${originalArtist}")
@@ -450,73 +445,6 @@ Song: ${searchTitle} (${originalTitle})`;
   }
 }
 
-async function searchWithTavily(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string) {
-  const queries = [
-    `"${searchArtist}" "${searchTitle}" lyrics full complete -youtube -video`,
-    `${searchArtist} ${searchTitle} song lyrics text`,
-    `"${originalArtist}" "${originalTitle}" 가사 전체`,
-    `${searchArtist} ${searchTitle} site:genius.com`,
-    `${searchArtist} ${searchTitle} site:azlyrics.com`
-  ];
-  
-  for (const query of queries) {
-    try {
-      const response = await fetch('https://api.tavily.com/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          api_key: TAVILY_API_KEY,
-          query: query,
-          search_depth: 'advanced',
-          include_domains: [
-            'genius.com',
-            'azlyrics.com',
-            'lyrics.com',
-            'songlyrics.com',
-            'metrolyrics.com',
-            'musixmatch.com',
-            'lyricsmode.com'
-          ],
-          max_results: 5,
-          include_raw_content: true
-        })
-      });
-
-      if (!response.ok) continue;
-
-      const data = await response.json();
-      
-      if (!data.results || data.results.length === 0) continue;
-      
-      for (const result of data.results) {
-        const content = result.raw_content || result.content;
-        if (!content) continue;
-        
-        const lyrics = extractLyricsFromContent(content, searchTitle);
-        
-        if (lyrics && lyrics.length > 200) {
-          const confidence = calculateConfidence(lyrics, originalArtist, originalTitle);
-          
-          if (confidence > 0.3) {
-            return {
-              lyrics,
-              source: 'AI-Tavily',
-              confidence,
-              title: originalTitle,
-              artist: originalArtist
-            };
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Tavily error for query:', query, error);
-    }
-  }
-  
-  throw new Error('No results found from Tavily');
-}
 
 function extractLyricsFromContent(content: string, title: string): string {
   // HTML 태그 제거
@@ -688,6 +616,15 @@ function calculateConfidence(lyrics: string, artist: string, title: string): num
 }
 
 async function checkCache(artist: string, title: string) {
+  const cacheKey = createCacheKey(artist, title);
+  
+  // 1. 메모리 캐시 확인
+  const memoryCached = getCachedValue(cacheKey);
+  if (memoryCached) {
+    return memoryCached;
+  }
+  
+  // 2. 데이터베이스 캐시 확인
   try {
     const { data } = await supabase
       .from('ai_lyrics_cache')
@@ -697,12 +634,15 @@ async function checkCache(artist: string, title: string) {
       .single();
     
     if (data && new Date(data.expires_at) > new Date()) {
-      await supabase
+      // 히트 카운트 비동기 업데이트 (응답 지연 방지)
+      supabase
         .from('ai_lyrics_cache')
         .update({ hit_count: (data.hit_count || 0) + 1 })
-        .eq('id', data.id);
+        .eq('id', data.id)
+        .then(() => {})
+        .catch(() => {});
       
-      return {
+      const cacheData = {
         lyrics: data.lyrics,
         lrcFormat: data.lrc_format,
         source: data.source,
@@ -710,6 +650,11 @@ async function checkCache(artist: string, title: string) {
         title: data.title,
         artist: data.artist
       };
+      
+      // 메모리 캐시에 저장
+      setCachedValue(cacheKey, cacheData);
+      
+      return cacheData;
     }
   } catch (error) {
     // 캐시 미스는 정상

@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { checkTablesExist } from '@/lib/init-database';
 import { checkRequiredTables } from '@/lib/auto-init-database';
 
-type ControlMode = 'manual' | 'learning' | 'auto';
+type ControlMode = 'manual' | 'auto';
 type SearchMode = 'auto' | 'manual';
 
 interface LyricsLine {
@@ -60,6 +60,7 @@ export default function HostControlV2() {
   
   // 학습 데이터
   const [learningData, setLearningData] = useState<number[]>([]);
+  const [timingData, setTimingData] = useState<number[]>([]);
   const lyricsSearchService = useRef(new LyricsSearchServiceClient());
   const [dbStatus, setDbStatus] = useState<string>('');
   
@@ -202,8 +203,8 @@ export default function HostControlV2() {
     
     setShowResultsModal(false);
     
-    // 이전 학습 데이터 확인
-    await checkPreviousPattern(result.artist, result.title);
+    // 캐시된 가사 확인
+    await checkCachedLyrics(result.artist, result.title);
     
     // 캐시 저장 (성공한 결과만)
     if (result.status === 'success' && !result.source.includes('캐시')) {
@@ -233,24 +234,24 @@ export default function HostControlV2() {
     }
   };
 
-  // 이전 학습 패턴 확인
-  const checkPreviousPattern = async (artist: string, title: string) => {
+  // 캐시된 가사 확인
+  const checkCachedLyrics = async (artist: string, title: string) => {
     try {
       const { data } = await supabase
-        .from('song_patterns')
+        .from('ai_lyrics_cache')
         .select('*')
-        .eq('song_id', `${artist}_${title}`)
+        .eq('artist', artist)
+        .eq('title', title)
         .single();
       
       if (data) {
-        toast.info('이전 학습 데이터를 찾았습니다. 자동 모드 사용 가능!');
-        if (data.line_timings) {
-          setLearningData(data.line_timings);
-        }
+        toast.info('캐시된 가사를 찾았습니다!');
+        return data;
       }
     } catch (error) {
-      // 패턴 없음 - 정상
+      // 캐시 없음 - 정상
     }
+    return null;
   };
 
   // 다음 라인으로
@@ -260,9 +261,10 @@ export default function HostControlV2() {
     const newIndex = Math.min(currentLineIndex + 1, songData.lyrics.length - 1);
     setCurrentLineIndex(newIndex);
     
-    if (controlMode === 'learning') {
+    // 타이밍 기록 (수동 모드)
+    if (controlMode === 'manual' && isPlaying) {
       const currentTime = Date.now() - startTime;
-      setLearningData(prev => [...prev, currentTime]);
+      setTimingData(prev => [...prev, currentTime]);
     }
     
     localStorage.setItem('current_line_index', newIndex.toString());
@@ -301,19 +303,22 @@ export default function HostControlV2() {
     });
   };
 
-  // 학습 데이터 저장
-  const saveLearningData = async () => {
-    if (!songData || learningData.length === 0) return;
+  // 가사 데이터 저장 (캐시)
+  const saveLyricsCache = async () => {
+    if (!songData) return;
     
     try {
-      await supabase.from('song_patterns').upsert({
-        song_id: `${songData.artist}_${songData.title}`,
-        mr_url: localStorage.getItem('youtube_url'),
-        line_timings: learningData,
+      await supabase.from('ai_lyrics_cache').upsert({
+        cache_key: `${songData.artist}_${songData.title}`.toLowerCase().replace(/\s+/g, '_'),
+        artist: songData.artist,
+        title: songData.title,
+        lyrics: songData.lyrics.map(l => l.text).join('\n'),
+        source: songData.source || 'manual',
+        confidence: songData.confidence || 0.9,
         created_at: new Date().toISOString()
       });
       
-      toast.success('학습 데이터가 저장되었습니다!');
+      toast.success('가사가 저장되었습니다!');
     } catch (error) {
       console.error('Save error:', error);
       toast.error('저장 실패');

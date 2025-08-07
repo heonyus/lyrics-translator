@@ -6,9 +6,11 @@ import {
   NeonButton,
   useNeonToast 
 } from '@/components/design-system';
-import { Play, Pause, RotateCcw, Copy, Search, Settings2, Monitor } from 'lucide-react';
+import { Play, Pause, RotateCcw, Copy, Search, Settings2, Monitor, Edit3 } from 'lucide-react';
+import { LyricsTimingEditor } from '@/components/lyrics-editor';
 import { useLRCFetcher } from '@/domains/lrc-fetcher';
 import { supabase } from '@/lib/supabase';
+import { LRCParser } from '@/domains/lyrics/services/lrc-parser';
 
 export default function OBSControlPage() {
   const { success, error, info } = useNeonToast();
@@ -18,6 +20,9 @@ export default function OBSControlPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentLyrics, setCurrentLyrics] = useState<any>(null);
   const [recentLyrics, setRecentLyrics] = useState<any[]>([]);
+  const [showEditor, setShowEditor] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const lrcParser = new LRCParser();
   
   // OBS 설정
   const [obsSettings, setObsSettings] = useState({
@@ -33,6 +38,30 @@ export default function OBSControlPage() {
   useEffect(() => {
     loadRecentLyrics();
   }, []);
+
+  // 키보드 단축키 처리
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // 입력 필드에 포커스가 있으면 단축키 무시
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      switch (e.key.toLowerCase()) {
+        case ' ':  // Space bar
+          e.preventDefault();
+          handlePlayPause();
+          break;
+        case 'r':  // R key
+          e.preventDefault();
+          handleReset();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isPlaying]);
 
   const loadRecentLyrics = async () => {
     try {
@@ -70,10 +99,12 @@ export default function OBSControlPage() {
       localStorage.setItem('current_title', result.title);
       localStorage.setItem('current_artist', result.artist);
       
+      const parseResult = lrcParser.parse(fetchedLRC);
       setCurrentLyrics({
         title: result.title,
         artist: result.artist,
         lrc: fetchedLRC,
+        parsedLRC: parseResult.success ? parseResult.data : null
       });
       
       success('가사 로드됨', `${result.title} - ${result.artist}`);
@@ -89,10 +120,12 @@ export default function OBSControlPage() {
     localStorage.setItem('current_title', lyric.title);
     localStorage.setItem('current_artist', lyric.artist);
     
+    const parseResult = lrcParser.parse(lyric.lrc_content);
     setCurrentLyrics({
       title: lyric.title,
       artist: lyric.artist,
       lrc: lyric.lrc_content,
+      parsedLRC: parseResult.success ? parseResult.data : null
     });
     
     success('가사 로드됨', `${lyric.title} - ${lyric.artist}`);
@@ -207,7 +240,17 @@ export default function OBSControlPage() {
             {/* 현재 가사 정보 */}
             {currentLyrics && (
               <GlassmorphicCard variant="dark" blur="md">
-                <h3 className="text-lg font-semibold text-neon-yellow mb-3">현재 가사</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold text-neon-yellow">현재 가사</h3>
+                  <NeonButton 
+                    onClick={() => setShowEditor(!showEditor)} 
+                    variant="outline" 
+                    color="yellow" 
+                    size="sm"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </NeonButton>
+                </div>
                 <div className="p-3 bg-black/30 rounded-lg">
                   <div className="font-medium text-white">{currentLyrics.title}</div>
                   <div className="text-sm text-gray-400">{currentLyrics.artist}</div>
@@ -225,6 +268,20 @@ export default function OBSControlPage() {
                 <NeonButton onClick={handlePlayPause} color="blue" size="lg">
                   {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
                 </NeonButton>
+              </div>
+              
+              {/* 키보드 단축키 안내 */}
+              <div className="mt-4 pt-4 border-t border-gray-700">
+                <div className="text-xs text-gray-500 space-y-1">
+                  <div className="flex justify-between">
+                    <span>재생/정지:</span>
+                    <kbd className="px-2 py-0.5 bg-gray-800 rounded text-gray-300">Space</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>처음으로:</span>
+                    <kbd className="px-2 py-0.5 bg-gray-800 rounded text-gray-300">R</kbd>
+                  </div>
+                </div>
               </div>
             </GlassmorphicCard>
 
@@ -309,7 +366,63 @@ export default function OBSControlPage() {
             </GlassmorphicCard>
           </div>
         </div>
+
+        {/* 가사 타이밍 편집기 */}
+        {showEditor && currentLyrics && currentLyrics.parsedLRC && (
+          <div className="mt-6">
+            <LyricsTimingEditor
+              lyrics={currentLyrics.parsedLRC}
+              onSave={(updatedLyrics) => {
+                // Update localStorage
+                const updatedLRC = formatLRCFromParsed(updatedLyrics);
+                localStorage.setItem('current_lrc', updatedLRC);
+                
+                // Update state
+                setCurrentLyrics({
+                  ...currentLyrics,
+                  lrc: updatedLRC,
+                  parsedLRC: updatedLyrics
+                });
+                
+                success('저장됨', '가사 타이밍이 업데이트되었습니다');
+                setShowEditor(false);
+              }}
+              onCancel={() => setShowEditor(false)}
+              currentTime={currentTime}
+              isPlaying={isPlaying}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+// Helper function to format ParsedLRC back to LRC string
+function formatLRCFromParsed(parsedLRC: any): string {
+  let lrcContent = '';
+  
+  // Add metadata
+  if (parsedLRC.metadata) {
+    Object.entries(parsedLRC.metadata).forEach(([key, value]) => {
+      lrcContent += `[${key}:${value}]
+`;
+    });
+  }
+  
+  // Add lines
+  parsedLRC.lines.forEach((line: any) => {
+    const minutes = Math.floor(line.startTime / 60000);
+    const seconds = Math.floor((line.startTime % 60000) / 1000);
+    const centiseconds = Math.floor((line.startTime % 1000) / 10);
+    
+    const timeTag = `[${minutes.toString().padStart(2, '0')}:${seconds
+      .toString()
+      .padStart(2, '0')}.${centiseconds.toString().padStart(2, '0')}]`;
+    
+    lrcContent += `${timeTag}${line.text}
+`;
+  });
+  
+  return lrcContent;
 }
