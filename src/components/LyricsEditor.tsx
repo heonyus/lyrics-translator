@@ -205,7 +205,7 @@ export function LyricsEditor({
 
             return (
               <div
-                key={`${line.id}-${index}`}
+                key={`line-${index}`}
                 className={cn(
                   "p-3 rounded-lg border transition-all",
                   isCurrentLine && "bg-primary/10 border-primary",

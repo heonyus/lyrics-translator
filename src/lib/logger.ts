@@ -211,7 +211,7 @@ export const logger = {
     if (sessionStats.apiCalls.size > 0) {
       console.log(`\n${colors.cyan}📈 API Performance:${colors.reset}`);
       sessionStats.apiCalls.forEach((stats, apiName) => {
-        const successRate = stats.count > 0 ? (stats.successes / stats.count * 100).toFixed(0) : 0;
+        const successRate = stats.count > 0 ? (stats.successes / stats.count * 100).toFixed(0) : '0';
         const statusIcon = parseInt(successRate) >= 80 ? '✅' : parseInt(successRate) >= 50 ? '⚠️' : '❌';
         console.log(
           `   ${statusIcon} ${colors.bright}${apiName.padEnd(20)}${colors.reset} ` +
