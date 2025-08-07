@@ -8,6 +8,8 @@ interface LyricLine {
   timestamp: number;
   text: string;
   duration?: number;
+  startTime: number;
+  endTime: number;
   wordTimings?: Array<{ word: string; start: number; end: number }>;
 }
 
