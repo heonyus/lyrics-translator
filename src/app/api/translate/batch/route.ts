@@ -2,6 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger, APITimer } from '@/lib/logger';
 
+// In-process Groq rate limiter to mitigate HTTP 429
+let GROQ_IN_FLIGHT = 0;
+const GROQ_MAX_CONCURRENCY = 1;
+const GROQ_QUEUE: Array<() => void> = [];
+function acquireGroqSlot(): Promise<void> {
+  return new Promise((resolve) => {
+    const tryAcquire = () => {
+      if (GROQ_IN_FLIGHT < GROQ_MAX_CONCURRENCY) {
+        GROQ_IN_FLIGHT++;
+        resolve();
+      } else {
+        GROQ_QUEUE.push(tryAcquire);
+      }
+    };
+    tryAcquire();
+  });
+}
+function releaseGroqSlot() {
+  GROQ_IN_FLIGHT = Math.max(0, GROQ_IN_FLIGHT - 1);
+  const next = GROQ_QUEUE.shift();
+  if (next) setTimeout(next, 25 + Math.floor(Math.random() * 50));
+}
+
 // API configuration
 let GROQ_API_KEY: string | undefined;
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
@@ -62,55 +85,60 @@ export async function POST(request: NextRequest) {
     try {
       const isPronounce = String(task || '').toLowerCase() === 'pronounce';
       logger.api('Groq Translate', 'start', `${isPronounce ? 'Pronounce' : 'Translate'} Target=${targetLang} Lines=${lines.length}`);
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            {
-              role: 'system',
-              content: [
-                {
-                  type: 'text',
-                  text: isPronounce
-                    ? `You are a professional pronunciation transcriber for lyrics into Korean Hangul.\n\nStrict rules:\n- Convert each line to its Korean Hangul pronunciation only (phonetic rendering), do NOT translate meaning.\n- Keep line structure; number of lines must match input.\n- Preserve section labels only if they are part of pronunciation; otherwise ignore labels like [Chorus].\n- No explanations or metadata.\n- Output ONLY pronunciations, numbered exactly like input.`
-                    : `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
-                }
-              ]
+      await acquireGroqSlot();
+      let data: any = null;
+      try {
+        const MAX_ATTEMPTS = 3;
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+              'Content-Type': 'application/json'
             },
-            {
-              role: 'user',
-              content: isPronounce
-                ? `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
+            body: JSON.stringify({
+              model: GROQ_MODEL,
+              messages: [
+                {
+                  role: 'system',
+                  content: [
+                    {
+                      type: 'text',
+                      text: isPronounce
+                        ? `You are a professional pronunciation transcriber for lyrics into Korean Hangul.\n\nStrict rules:\n- Convert each line to its Korean Hangul pronunciation only (phonetic rendering), do NOT translate meaning.\n- Keep line structure; number of lines must match input.\n- Preserve section labels only if they are part of pronunciation; otherwise ignore labels like [Chorus].\n- No explanations or metadata.\n- Output ONLY pronunciations, numbered exactly like input.`
+                        : `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
+                    }
+                  ]
+                },
+                {
+                  role: 'user',
+                  content: isPronounce
+                    ? `${context ? `Context: Song=\"${context.title}\" Artist=\"${context.artist}\".` : ''}\n\nTranscribe the following lyrics to Korean Hangul pronunciation (phonetic rendering). Do NOT translate meaning.\nReturn ONLY the pronunciations, one per line, in the same order as input, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+                    : `${context ? `Context: Song=\"${context.title}\" Artist=\"${context.artist}\".` : ''}\n\nTranslate the following lyrics to ${targetLang}.\nReturn ONLY the translations, one per line, in the same order as input, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+                }
+              ],
+              temperature: 0.3,
+              max_tokens: 2000
+            })
+          });
 
-Transcribe the following lyrics to Korean Hangul pronunciation (phonetic rendering). Do NOT translate meaning.
-Return ONLY the pronunciations, one per line, in the same order as input, numbered 1-${lines.length}.
-
-Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
-                : `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
-
-Translate the following lyrics to ${targetLang}.
-Return ONLY the translations, one per line, in the same order as input, numbered 1-${lines.length}.
-
-Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+          if (!response.ok) {
+            logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
+            if (response.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+              const delay = 400 * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
             }
-          ],
-          temperature: 0.3,
-          max_tokens: 2000
-        })
-      });
+            throw new Error(`Groq API error: ${response.status}`);
+          }
 
-      if (!response.ok) {
-        const error = await response.text();
-        logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
-        throw new Error(`Groq API error: ${response.status}`);
+          data = await response.json();
+          break;
+        }
+        if (!data) throw new Error('Groq API failed after retries');
+      } finally {
+        releaseGroqSlot();
       }
-
-      const data = await response.json();
       const translationText = data.choices[0]?.message?.content?.trim() || '';
 
       // Parse the numbered translations
