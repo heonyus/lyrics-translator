@@ -25,7 +25,7 @@ export async function geminiSearch({
   
   try {
     const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     // First, try to get lyrics directly
     const directPrompt = `Find the complete lyrics for the song "${title}" by ${artist}.
@@ -145,7 +145,7 @@ async function fetchAndParseWithGemini(url: string, artist: string, title: strin
     
     // Use Gemini to extract lyrics
     const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     const extractPrompt = `Extract the lyrics for "${title}" by ${artist} from this HTML content.
 
