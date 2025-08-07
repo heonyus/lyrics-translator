@@ -27,6 +27,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
   
   try {
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
+    const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20240620';
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -35,7 +36,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: CLAUDE_MODEL,
         max_tokens: 6000,
         messages: [
           {
@@ -57,6 +58,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
         await new Promise(r => setTimeout(r, 600));
         const { getSecret: getSecretOpenAI } = await import('@/lib/secure-secrets');
         const OPENAI_API_KEY = (await getSecretOpenAI('openai')) || process.env.OPENAI_API_KEY;
+        const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
         const retry = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -64,7 +66,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'gpt-4.1',
+            model: OPENAI_MODEL,
             messages: [
               { role: 'system', content: 'You return only strict JSON. If unknown, set hasLyrics=false. Never invent lyrics.' },
               { role: 'user', content: `Return exact original lyrics for "${title}" by "${artist}". No translation, preserve line breaks. Language hint: ${expectedLang}.\n\nJSON ONLY:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }` }
@@ -140,6 +142,7 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
   
   try {
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -147,7 +150,7 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4.1',
+        model: OPENAI_MODEL,
         messages: [
           {
             role: 'system',
@@ -204,6 +207,7 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
   
   try {
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
+    const GROQ_MODEL = process.env.GROQ_MODEL || 'deepseek-r1-distill-llama-70b';
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -211,7 +215,7 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-r1-distill-llama-70b',
+        model: GROQ_MODEL,
         messages: [
           {
             role: 'system',
@@ -266,6 +270,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
   const timer = new APITimer('Perplexity Search');
   
   try {
+    const PERPLEXITY_MODEL = process.env.PERPLEXITY_MODEL || 'sonar-pro';
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
       headers: {
@@ -273,7 +278,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'sonar-pro',
+        model: PERPLEXITY_MODEL,
         messages: [
           {
             role: 'user',
@@ -296,7 +301,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'sonar',
+            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'sonar',
             messages: [
               { role: 'user', content: `ONLY output the exact original lyrics for "${title}" by "${artist}". No commentary. If unknown, output exactly: LYRICS_NOT_FOUND.` }
             ],
