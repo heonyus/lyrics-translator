@@ -14,6 +14,187 @@ function validateLyricsText(text: string): boolean {
   return true;
 }
 
+// Whitelist for safe lyric source hosts
+const ALLOWED_HOSTS = [
+  'genius.com',
+  'azlyrics.com',
+  'lyrics.com',
+  'musixmatch.com',
+  'klyrics.net',
+  'colorcodedlyrics.com',
+  'lyricstranslate.com'
+];
+
+async function fetchUrlForTool(url: string) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace('www.', '');
+    if (!ALLOWED_HOSTS.includes(host)) {
+      return { ok: false, error: 'host_not_allowed', url };
+    }
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+    if (!res.ok) return { ok: false, status: res.status, url };
+    const htmlRaw = await res.text();
+    const cleaned = htmlRaw
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+      .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+      .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+      .slice(0, 60000);
+    return { ok: true, url, html: cleaned };
+  } catch (e) {
+    return { ok: false, error: String(e), url };
+  }
+}
+
+// OpenAI tools (function calling) agent that browses and extracts lyrics from HTML
+async function searchWithOpenAITools(artist: string, title: string): Promise<any | null> {
+  const { getSecret } = await import('@/lib/secure-secrets');
+  const OPENAI_API_KEY = (await getSecret('openai')) || process.env.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY) return null;
+
+  const timer = new APITimer('GPT Tools Search');
+
+  try {
+    const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+
+    const system = [
+      {
+        role: 'system',
+        content: [
+          'You are a strict lyrics extraction agent.',
+          '- You may browse using the tool fetch_url to retrieve HTML from ALLOWED_HOSTS only.',
+          '- Goal: return ONLY the exact original lyrics, preserving line breaks. Do not translate or paraphrase.',
+          '- If unknown or blocked, output hasLyrics=false.',
+          `- Language hint: ${expectedLang}`,
+          '- Final answer MUST be strict JSON: { "artist": "...", "title": "...", "lyrics": "...", "language": "ko|en|ja|...", "hasLyrics": true|false }',
+          '- Think silently; do not include reasoning.'
+        ].join('\n')
+      } as any
+    ];
+
+    const fewShot = [
+      { role: 'user', content: 'Find lyrics: "광화문에서 (At Gwanghwamun)" by "KYUHYUN".' },
+      { role: 'assistant', content: JSON.stringify({ artist: 'KYUHYUN', title: '광화문에서 (At Gwanghwamun)', lyrics: 'LYRICS_NOT_FOUND', language: 'ko', hasLyrics: false }) }
+    ];
+
+    const user = [
+      {
+        role: 'user',
+        content: [
+          `Task: Get the exact lyrics for "${title}" by "${artist}".`,
+          'Process:',
+          '1) Suggest 1-3 canonical lyrics page URLs from ALLOWED_HOSTS only.',
+          '2) Call fetch_url for each candidate sequentially.',
+          '3) Parse HTML and extract ONLY the lyrics text (no titles/credits/annotations).',
+          '4) Return FINAL strict JSON as specified. If unavailable, hasLyrics=false.',
+          '',
+          'ALLOWED_HOSTS:',
+          ALLOWED_HOSTS.join(', ')
+        ].join('\n')
+      } as any
+    ];
+
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'fetch_url',
+          description: 'Fetch a public webpage (lyrics page) and return cleaned HTML.',
+          parameters: {
+            type: 'object',
+            properties: { url: { type: 'string' } },
+            required: ['url']
+          }
+        }
+      }
+    ];
+
+    const messages: any[] = [...system, ...fewShot, ...user];
+    const maxSteps = 6;
+
+    for (let step = 0; step < maxSteps; step++) {
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          messages,
+          tools,
+          tool_choice: 'auto',
+          temperature: 0.0,
+          max_tokens: 7000
+        })
+      });
+
+      if (!resp.ok) {
+        timer.fail(`HTTP ${resp.status}`);
+        return null;
+      }
+      const data = await resp.json();
+      const msg = data.choices?.[0]?.message;
+      const calls = msg?.tool_calls || [];
+
+      if (calls.length > 0) {
+        for (const c of calls) {
+          if (c.type === 'function' && c.function?.name === 'fetch_url') {
+            let args: any = {};
+            try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
+            const result = await fetchUrlForTool(String(args.url || ''));
+            messages.push({
+              role: 'tool',
+              tool_call_id: c.id,
+              name: 'fetch_url',
+              content: JSON.stringify(result)
+            });
+          }
+        }
+        // continue next loop to let the model reason on tool outputs
+        continue;
+      }
+
+      const content = msg?.content || '';
+      if (content) {
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === 'object' && 'hasLyrics' in parsed) {
+            if (parsed.hasLyrics && parsed.lyrics) {
+              const lyrics = normalizeLyrics(String(parsed.lyrics));
+              if (validateLyricsText(lyrics)) {
+                timer.success(`Found lyrics: ${lyrics.length} chars`);
+                return { ...parsed, lyrics, source: 'gpt-tools', confidence: 0.92 };
+              }
+            }
+            // even if hasLyrics=false, return to respect non-filtering philosophy up the chain if needed
+            timer.success('No lyrics (hasLyrics=false)');
+            return { ...parsed, source: 'gpt-tools', confidence: 0.3 };
+          }
+        } catch {
+          timer.fail('Non-JSON final answer');
+          return null;
+        }
+      }
+    }
+
+    timer.fail('Max steps reached');
+    return null;
+  } catch (error) {
+    timer.fail(error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
 // Search with Claude
 async function searchWithClaude(artist: string, title: string): Promise<any | null> {
   const { getSecret } = await import('@/lib/secure-secrets');
@@ -373,9 +554,9 @@ export async function POST(request: NextRequest) {
     
     logger.search(`🤖 LLM Search: "${artist} - ${title}"`);
     
-    // Search with all LLMs in parallel
+    // Search with tools-enabled GPT first (browsing + HTML extraction), then others
     // Sequential to reduce 429 bursts
-    const funcs = [searchWithGroq, searchWithGPT, searchWithClaude, searchWithPerplexity];
+    const funcs = [searchWithOpenAITools, searchWithGroq, searchWithGPT, searchWithClaude, searchWithPerplexity];
     const validResults: any[] = [];
     for (const fn of funcs) {
       try {
