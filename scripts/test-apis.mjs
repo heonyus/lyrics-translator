@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Simple API tester for local/prod
 
-const base = process.argv[2] === 'prod'
-  ? 'https://lyrics-translator-o6pfsbl81-heonyus-team.vercel.app'
-  : 'http://localhost:3001';
+const mode = process.argv[2] || 'local';
+const defaultProd = 'https://lyrics-translator-1mlhr8ffh-heonyus-team.vercel.app';
+const base = mode === 'prod'
+  ? (process.env.PROD_BASE_URL || defaultProd)
+  : (process.env.BASE_URL || 'http://localhost:3000');
 
-const artist = 'dori';
-const title = '이 밤';
+const artist = process.argv[3] || 'dori';
+const title = process.argv[4] || '이 밤';
 
 async function post(path, body) {
   const url = `${base}${path}`;
