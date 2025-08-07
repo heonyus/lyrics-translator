@@ -33,15 +33,15 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         messages: [
           {
             role: 'system',
-            content: 'You are a lyrics finder. Search the web and return the complete, accurate lyrics for songs. Do not generate or make up lyrics.'
+            content: 'You output only the exact original lyrics. If unknown, reply exactly: LYRICS_NOT_FOUND. Never fabricate.'
           },
           {
             role: 'user',
-            content: `Find the complete lyrics for "${title}" by ${artist}. Search multiple sources and return the most accurate version. Return ONLY the lyrics, no explanations.`
+            content: `Return ONLY the exact original lyrics for "${title}" by ${artist}. No commentary. Preserve line breaks. If unknown, reply: LYRICS_NOT_FOUND.`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 4000
+        temperature: 0.0,
+        max_tokens: 6000
       })
     });
     
@@ -87,14 +87,14 @@ async function searchWithClaude(artist: string, title: string): Promise<string |
       },
       body: JSON.stringify({
         model: 'claude-3-5-haiku-20241022',
-        max_tokens: 4000,
+        max_tokens: 6000,
         messages: [
           {
             role: 'user',
-            content: `I need the lyrics for "${title}" by ${artist}. Please search your knowledge and provide the complete, accurate lyrics. If you don't know the exact lyrics, return "LYRICS_NOT_FOUND". Do not generate or make up lyrics. Return ONLY the actual lyrics.`
+            content: `Return ONLY the exact original lyrics for "${title}" by ${artist}. If unknown, reply exactly: LYRICS_NOT_FOUND. No commentary, no translation. Preserve line breaks.`
           }
         ],
-        temperature: 0.1
+        temperature: 0.0
       })
     });
     
@@ -142,15 +142,15 @@ async function searchWithGroq(artist: string, title: string): Promise<string | n
         messages: [
           {
             role: 'system',
-            content: 'You are a lyrics expert. Provide accurate, complete song lyrics when asked. Never make up or generate lyrics.'
+            content: 'Return only the exact original lyrics. If unknown, reply exactly: LYRICS_NOT_AVAILABLE. No fabrication.'
           },
           {
             role: 'user',
-            content: `Provide the complete lyrics for "${title}" by ${artist}. If you don't have the exact lyrics in your training data, return "LYRICS_NOT_AVAILABLE". Return ONLY the lyrics text, no metadata or explanations.`
+            content: `Only output the lyrics for "${title}" by ${artist}. No explanations. Preserve line breaks. If unknown, reply: LYRICS_NOT_AVAILABLE.`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 4000
+        temperature: 0.0,
+        max_tokens: 6000
       })
     });
     

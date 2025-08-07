@@ -14,6 +14,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
   const timer = new APITimer('Claude Search');
   
   try {
+    const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -23,14 +24,14 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
       },
       body: JSON.stringify({
         model: 'claude-3-5-haiku-20241022',
-        max_tokens: 4000,
+        max_tokens: 6000,
         messages: [
           {
             role: 'user',
             content: [
               {
                 type: 'text',
-                text: `Find the complete lyrics for "${title}" by "${artist}".\n\nReturn the response in this JSON format:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "complete lyrics with \\n for line breaks",\n  "language": "ko/en/ja/etc",\n  "hasLyrics": true/false\n}\n\nIf you cannot find the lyrics, set hasLyrics to false.`
+                text: `Task: Return the exact original song lyrics for "${title}" by "${artist}". Do not translate or paraphrase. Preserve line breaks.\n\nConstraints:\n- Do NOT fabricate or guess lines.\n- If you do not know the exact lyrics, set hasLyrics=false.\n- Language hint: output in the song's original language (likely: ${expectedLang}).\n\nOutput JSON ONLY (no extra text):\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n as line breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }`
               }
             ]
           }
@@ -53,11 +54,11 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
           body: JSON.stringify({
             model: 'gpt-4o-mini',
             messages: [
-              { role: 'system', content: 'You are a lyrics finder. Return complete song lyrics in JSON format.' },
-              { role: 'user', content: `Find complete lyrics for "${title}" by "${artist}".\n\nReturn JSON:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "complete lyrics with \\n for line breaks",\n  "language": "ko/en/ja/etc",\n  "hasLyrics": true/false\n}` }
+              { role: 'system', content: 'You return only strict JSON. If unknown, set hasLyrics=false. Never invent lyrics.' },
+              { role: 'user', content: `Return exact original lyrics for "${title}" by "${artist}". No translation, preserve line breaks. Language hint: ${expectedLang}.\n\nJSON ONLY:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }` }
             ],
-            temperature: 0.1,
-            max_tokens: 4000,
+            temperature: 0.0,
+            max_tokens: 6000,
             response_format: { type: 'json_object' }
           })
         });
@@ -126,6 +127,7 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
   const timer = new APITimer('GPT Search');
   
   try {
+    const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -137,24 +139,16 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
         messages: [
           {
             role: 'system',
-            content: 'You are a lyrics finder. Return complete song lyrics in JSON format.'
+            content: 'You are a lyrics finder. Output strict JSON only. Never fabricate lyrics; if unknown set hasLyrics=false.'
           },
           {
             role: 'user',
-            content: `Find complete lyrics for "${title}" by "${artist}".
-            
-Return JSON:
-{
-  "artist": "${artist}",
-  "title": "${title}",
-  "lyrics": "complete lyrics with \\n for line breaks",
-  "language": "ko/en/ja/etc",
-  "hasLyrics": true/false
-}`
+            content: `Return the exact original lyrics for "${title}" by "${artist}". No translation, preserve line breaks. Language hint: ${expectedLang}.
+\nJSON ONLY:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 4000,
+        temperature: 0.0,
+        max_tokens: 6000,
         response_format: { type: "json_object" }
       })
     });
@@ -197,6 +191,7 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
   const timer = new APITimer('Groq Search');
   
   try {
+    const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -208,25 +203,14 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
         messages: [
           {
             role: 'system',
-            content: `You are a lyrics database. Return complete song lyrics in JSON format.
-            
-IMPORTANT: If you know the lyrics, return them. If not, set hasLyrics to false.`
+            content: `You are a lyrics database. Output strict JSON. Do NOT invent lyrics. If unknown, set hasLyrics=false. Preserve line breaks; do not translate. Language hint: ${expectedLang}.`
           },
           {
             role: 'user',
-            content: `Find the complete lyrics for "${title}" by "${artist}".
-
-Return JSON:
-{
-  "artist": "${artist}",
-  "title": "${title}",
-  "lyrics": "complete lyrics with \\n for line breaks",
-  "language": "ko/en/ja/etc",
-  "hasLyrics": true/false
-}`
+            content: `Return exact original lyrics for "${title}" by "${artist}". JSON ONLY with fields artist,title,lyrics,language,hasLyrics. No extra text.`
           }
         ],
-        temperature: 0.1,
+        temperature: 0.0,
         max_tokens: 8000,
         response_format: { type: "json_object" }
       })
@@ -281,11 +265,11 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
         messages: [
           {
             role: 'user',
-            content: `Find the complete lyrics for the song "${title}" by "${artist}". Return ONLY the full lyrics text (no commentary), keeping line breaks.`
+            content: `Return ONLY the exact original lyrics for "${title}" by "${artist}". No commentary, no metadata, no translation. Preserve line breaks. If you do not know the exact lyrics, reply exactly: LYRICS_NOT_FOUND.`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 4000
+        temperature: 0.0,
+        max_tokens: 6000
       })
     });
     
@@ -302,10 +286,10 @@ async function searchWithPerplexity(artist: string, title: string): Promise<any 
           body: JSON.stringify({
             model: 'sonar-small-online',
             messages: [
-              { role: 'user', content: `Find the complete lyrics for the song "${title}" by "${artist}". Return ONLY the full lyrics text (no commentary).` }
+              { role: 'user', content: `ONLY output the exact original lyrics for "${title}" by "${artist}". No commentary. If unknown, output exactly: LYRICS_NOT_FOUND.` }
             ],
-            temperature: 0.1,
-            max_tokens: 4000
+            temperature: 0.0,
+            max_tokens: 6000
           })
         });
         if (!retry.ok) {
@@ -379,9 +363,9 @@ export async function POST(request: NextRequest) {
     for (const fn of funcs) {
       try {
         const v = await fn(artist, title);
-        if (v && v.lyrics && v.lyrics.length > 100) validResults.push(v);
+        if (v && v.lyrics) validResults.push(v);
       } catch {}
-      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 200)));
+      await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 80)));
     }
     
     if (validResults.length === 0) {

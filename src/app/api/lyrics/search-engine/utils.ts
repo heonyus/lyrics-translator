@@ -28,7 +28,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         messages: [
           {
             role: 'user',
-            content: `Return only direct lyrics page URLs (one per line) for "${artist} - ${title}" from Genius, AZLyrics, Musixmatch, or Lyrics.com.`
+            content: `Return only canonical lyrics page URLs for "${artist} - ${title}".\nRules:\n- Providers: Genius, AZLyrics, Musixmatch, Lyrics.com.\n- One URL per line.\n- No duplicates, no commentary, no markdown.\n- Prefer exact song page (not search pages).`
           }
         ],
         temperature: 0.1,
@@ -49,7 +49,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
           body: JSON.stringify({
             model: 'sonar-small-online',
             messages: [
-              { role: 'user', content: `Only output URLs. Find lyrics page URLs for "${artist} - ${title}". Sites: Genius, AZLyrics, Musixmatch, Lyrics.com.` }
+              { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: Genius, AZLyrics, Musixmatch, Lyrics.com.` }
             ],
             temperature: 0.1,
             max_tokens: 500
@@ -97,7 +97,7 @@ async function extractLyricsWithGroq(html: string, url: string): Promise<string 
       .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
       .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
       .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
-      .substring(0, 15000); // Limit to 15k chars
+      .substring(0, 12000); // smaller context for speed
     
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -110,15 +110,15 @@ async function extractLyricsWithGroq(html: string, url: string): Promise<string 
         messages: [
           {
             role: 'system',
-            content: 'Extract only the song lyrics from the HTML. Return ONLY the lyrics text, no explanations or metadata. Preserve line breaks.'
+            content: 'Extract only the song lyrics from the HTML. Return ONLY the raw lyrics text. No explanations, headers, titles, or credits. Preserve original line breaks.'
           },
           {
             role: 'user',
             content: `Extract the lyrics from this HTML:\n\n${cleanedHtml}`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 4000
+        temperature: 0.0,
+        max_tokens: 5000
       })
     });
     
