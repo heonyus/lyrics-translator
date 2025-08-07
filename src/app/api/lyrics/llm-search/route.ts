@@ -96,6 +96,59 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
 
+    // Perplexity-backed web search for candidate URLs
+    async function searchWebForTool(artistArg: string, titleArg: string) {
+      try {
+        const PPLX_KEY = (await getSecret('perplexity')) || process.env.PERPLEXITY_API_KEY;
+        if (!PPLX_KEY) return { ok: false, error: 'perplexity_key_missing' };
+        const lang = detectDominantLang(`${artistArg} ${titleArg}`);
+        const providers = (
+          lang === 'ko'
+            ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
+            : lang === 'ja'
+            ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
+            : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
+        );
+        const resp = await fetch('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${PPLX_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.PERPLEXITY_MODEL || 'gpt-4.1',
+            messages: [
+              { role: 'user', content: `Return only canonical lyrics page URLs for "${titleArg}" by "${artistArg}".\nRules:\n- Providers: ${providers.join(', ')}.\n- One URL per line.\n- No duplicates, no commentary, no markdown.\n- Prefer exact song page (not search pages).\n- Exclude URLs containing ?q=, /search, /tag, /category, or artist hubs.` }
+            ],
+            temperature: 0.1,
+            max_tokens: 400
+          })
+        });
+        if (!resp.ok) return { ok: false, status: resp.status };
+        const data = await resp.json();
+        const content = data.choices?.[0]?.message?.content || '';
+        const all = (content.match(/https?:\/\/[^\s]+/g) || []).map((u: string) => u.replace(/[),.]+$/,''));
+        const allowed = all.filter((u: string) => {
+          try {
+            const host = new URL(u).hostname.replace('www.', '');
+            if (!ALLOWED_HOSTS.includes(host)) return false;
+            if (/[?]q=|\/search|\/tag\b|\/category\b|\/artist\b/.test(u)) return false;
+            return true;
+          } catch { return false; }
+        });
+        const seen = new Set<string>();
+        const urls: string[] = [];
+        for (const u of allowed) {
+          try {
+            const parsed = new URL(u);
+            const key = parsed.hostname + parsed.pathname;
+            if (!seen.has(key)) { seen.add(key); urls.push(u); }
+          } catch {}
+          if (urls.length >= 5) break;
+        }
+        return { ok: true, urls };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
     const system = [
       {
         role: 'system',
@@ -208,20 +261,8 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
             } else if (c.function?.name === 'search_web') {
               let args: any = {};
               try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
-              // implement inline by calling Perplexity-backed search in this process for now
-              const lang = detectDominantLang(`${artist} ${title}`);
-              const providers = (
-                lang === 'ko'
-                  ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
-                  : lang === 'ja'
-                  ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
-                  : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
-              );
-              const suggestion = {
-                ok: true,
-                urls: providers.slice(0, 3).map((p) => `https://${p}`)
-              };
-              messages.push({ role: 'tool', tool_call_id: c.id, name: 'search_web', content: JSON.stringify(suggestion) });
+              const result = await searchWebForTool(String(args.artist || artist), String(args.title || title));
+              messages.push({ role: 'tool', tool_call_id: c.id, name: 'search_web', content: JSON.stringify(result) });
             }
           }
         }
