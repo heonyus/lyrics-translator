@@ -42,7 +42,7 @@ async function fetchUrlForTool(url: string) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8'
       }
     });
     if (!res.ok) return { ok: false, status: res.status, url };
