@@ -32,6 +32,9 @@ const ALLOWED_HOSTS = [
   // Backup
   'mojim.com',
   'kkbox.com'
+  , 'blog.naver.com'
+  , 'm.blog.naver.com'
+  , 'tistory.com'
 ];
 
 async function fetchUrlForTool(url: string) {
@@ -45,18 +48,20 @@ async function fetchUrlForTool(url: string) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8'
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8',
+        'Referer': host.includes('naver.com') ? 'https://m.blog.naver.com' : undefined as any
       }
     });
     if (!res.ok) return { ok: false, status: res.status, url };
     const htmlRaw = await res.text();
-    const cleaned = htmlRaw
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    const isNaverOrTistory = /naver\.com$|tistory\.com$/.test(host);
+    const cleaned = (isNaverOrTistory ? htmlRaw : htmlRaw
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''))
       .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
       .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
       .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
       .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
-      .slice(0, 45000);
+      .slice(0, isNaverOrTistory ? 120000 : 45000);
     return { ok: true, url, html: cleaned };
   } catch (e) {
     return { ok: false, error: String(e), url };

@@ -19,7 +19,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
     const lang = detectDominantLang(`${artist} ${title}`);
     const providers = (
       lang === 'ko'
-        ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
+        ? ['klyrics.net', 'colorcodedlyrics.com', 'blog.naver.com', 'm.blog.naver.com', 'tistory.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
         : lang === 'ja'
         ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
         : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
