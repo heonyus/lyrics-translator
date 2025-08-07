@@ -1,7 +1,21 @@
 'use client';
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { ParsedLRC, LyricLine } from '@/domains/lyrics/types/lyrics.types';
+
+// Define types locally since domains is removed
+interface LyricLine {
+  index: number;
+  timestamp: number;
+  text: string;
+  duration?: number;
+  wordTimings?: Array<{ word: string; start: number; end: number }>;
+}
+
+interface ParsedLRC {
+  metadata?: Record<string, string>;
+  lines: LyricLine[];
+  totalDuration?: number;
+}
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
