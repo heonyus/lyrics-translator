@@ -40,6 +40,7 @@ export default function MobileDashboard() {
 
   // Translations
   const [translations, setTranslations] = useState<any>({});
+  const [pronunciations, setPronunciations] = useState<string[] | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
   
   // Editor states
@@ -161,6 +162,29 @@ export default function MobileDashboard() {
     }
   };
 
+  // Generate Korean Hangul pronunciations for foreign lyrics (dashboard-only)
+  const buildPronunciations = async (lines: string[]) => {
+    if (!lines.length) return;
+    try {
+      const response = await fetch('/api/translate/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lines,
+          targetLanguage: 'ko',
+          context: { title: currentSong.title, artist: currentSong.artist },
+          task: 'pronounce'
+        })
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.success && Array.isArray(data.translations)) {
+        setPronunciations(data.translations);
+        localStorage.setItem('current_pronunciations', JSON.stringify(data.translations));
+      }
+    } catch {}
+  };
+
   // Re-search with different query or force refresh
   const handleReSearch = async () => {
     if (!currentSong.title && !searchQuery.trim()) return;
@@ -218,6 +242,8 @@ export default function MobileDashboard() {
     localStorage.setItem('current_artist', song.artist);
     localStorage.setItem('current_lrc', song.lyrics);
     localStorage.setItem('current_line_index', '0');
+    localStorage.removeItem('current_pronunciations');
+    setPronunciations(null);
     
     toast.success(`🎵 ${result.source || 'Smart Scraper'}에서 가사를 찾았습니다!`);
     
@@ -228,6 +254,11 @@ export default function MobileDashboard() {
     const translationEnabled = localStorage.getItem('translation_enabled') === 'true';
     if (song.lyricsLines.length > 0 && settings.selectedLanguages.length > 0 && translationEnabled) {
       translateLyrics(song.lyricsLines);
+    }
+    // Build pronunciations for non-Korean lyrics for dashboard only
+    const isNonKorean = song.lyrics && !(/[\uAC00-\uD7AF]/.test(song.lyrics));
+    if (song.lyricsLines.length > 0 && isNonKorean) {
+      buildPronunciations(song.lyricsLines);
     }
   };
 
@@ -284,7 +315,8 @@ export default function MobileDashboard() {
             context: {
               title: currentSong.title,
               artist: currentSong.artist
-            }
+            },
+            task: 'translate'
           })
         });
         
@@ -691,6 +723,10 @@ export default function MobileDashboard() {
                       </p>
                     )
                   ))}
+                  {/* Pronunciations (dashboard only, not in OBS overlay) */}
+                  {typeof window !== 'undefined' && window.location.pathname.startsWith('/obs') === false && pronunciations && pronunciations[currentLineIndex] && (
+                    <p className="text-lg text-green-300/80 mt-2">{pronunciations[currentLineIndex]}</p>
+                  )}
                 </div>
                 
                 {/* Translation Button */}

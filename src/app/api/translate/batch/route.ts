@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY || '';
       GOOGLE_API_KEY = (await getSecret('google')) || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
     }
-    const { lines, targetLanguage, context } = await request.json();
+    const { lines, targetLanguage, context, task } = await request.json();
     
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
       return NextResponse.json(
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
     
     // Try Groq first
     try {
-      logger.api('Groq Translate', 'start', `Target=${targetLang} Lines=${lines.length}`);
+      const isPronounce = String(task || '').toLowerCase() === 'pronounce';
+      logger.api('Groq Translate', 'start', `${isPronounce ? 'Pronounce' : 'Translate'} Target=${targetLang} Lines=${lines.length}`);
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -75,13 +76,22 @@ export async function POST(request: NextRequest) {
               content: [
                 {
                   type: 'text',
-                  text: `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
+                  text: isPronounce
+                    ? `You are a professional pronunciation transcriber for lyrics into Korean Hangul.\n\nStrict rules:\n- Convert each line to its Korean Hangul pronunciation only (phonetic rendering), do NOT translate meaning.\n- Keep line structure; number of lines must match input.\n- Preserve section labels only if they are part of pronunciation; otherwise ignore labels like [Chorus].\n- No explanations or metadata.\n- Output ONLY pronunciations, numbered exactly like input.`
+                    : `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
                 }
               ]
             },
             {
               role: 'user',
-              content: `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
+              content: isPronounce
+                ? `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
+
+Transcribe the following lyrics to Korean Hangul pronunciation (phonetic rendering). Do NOT translate meaning.
+Return ONLY the pronunciations, one per line, in the same order as input, numbered 1-${lines.length}.
+
+Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+                : `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
 
 Translate the following lyrics to ${targetLang}.
 Return ONLY the translations, one per line, in the same order as input, numbered 1-${lines.length}.
@@ -127,8 +137,9 @@ Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
         translations: translations.slice(0, lines.length),
         sourceLanguage: 'auto',
         targetLanguage,
-        source: 'Groq (Llama 3.3 70B)',
-        model: GROQ_MODEL
+        source: isPronounce ? 'Groq (Pronunciation)' : 'Groq (Llama 3.3 70B)',
+        model: GROQ_MODEL,
+        task: isPronounce ? 'pronounce' : 'translate'
       });
 
     } catch (groqError) {
@@ -144,7 +155,12 @@ Original lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         // Try batch translation first
-        const batchPrompt = `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
+        const isPron = String(task || '').toLowerCase() === 'pronounce';
+        const batchPrompt = isPron
+          ? `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
+
+Transcribe the lyrics to Korean Hangul pronunciation.\nRules:\n- Do NOT translate.\n- Keep the same number of lines.\n- No commentary.\n- Return ONLY pronunciations, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
+          : `${context ? `Context: Song="${context.title}" Artist="${context.artist}".` : ''}
 
 Translate the lyrics to ${targetLang}.\nRules:\n- Keep the same number of lines.\n- Preserve names and punctuation.\n- No commentary.\n- Return ONLY translations, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`;
         
@@ -212,8 +228,9 @@ Translate the lyrics to ${targetLang}.\nRules:\n- Keep the same number of lines.
           translations: translations.slice(0, lines.length),
           sourceLanguage: 'auto',
           targetLanguage,
-          source: 'Gemini 2.5 Flash (Batch)',
-          model: 'gemini-2.5-flash'
+          source: isPron ? 'Gemini 2.5 Flash (Pronounce)' : 'Gemini 2.5 Flash (Batch)',
+          model: 'gemini-2.5-flash',
+          task: isPron ? 'pronounce' : 'translate'
         });
         
       } catch (geminiError) {
