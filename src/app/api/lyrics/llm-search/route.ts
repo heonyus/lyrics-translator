@@ -889,6 +889,12 @@ export async function POST(request: NextRequest) {
       let nt = t || '';
       if (/원오크락|원오케이락/i.test(na)) na = 'ONE OK ROCK';
       if (/왓에발유얼|왓에벌유얼|왓에버유얼|왓에버 유어|왓 에버 유어|왓에버유아|웨러에버유어|웨어에버유어/i.test(nt)) nt = 'Wherever you are';
+      // dori 2오클락 변형 보정
+      if (/도리/i.test(na)) na = 'dori';
+      if (/(\d+)\s*오\s*클락|\d+\s*오클락/i.test(nt)) {
+        const m = nt.match(/(\d+)/);
+        if (m) nt = `${m[1]} o'clock`;
+      }
       return { na, nt };
     }
     const norm = normalizeAliases(String(artist || ''), String(title || ''));

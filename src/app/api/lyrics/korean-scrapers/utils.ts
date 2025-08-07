@@ -27,6 +27,49 @@ export function extractTextFromHTML(html: string): string {
     .join('\n');
 }
 
+// Generate Korean search query variants (romanization, spacing, o'clock normalization)
+function generateKoVariants(artist: string, title: string): Array<{ a: string; t: string }> {
+  const A = String(artist || '').trim();
+  const T = String(title || '').trim();
+  const artists = new Set<string>([A]);
+  const titles = new Set<string>([T]);
+
+  // Artist romanization
+  if (/도리/i.test(A)) {
+    artists.add('dori');
+    artists.add('DORI');
+    artists.add('Dori');
+  }
+
+  // Title normalization: "2오클락" → "2 o'clock", "2 oclock"
+  const ocRegex = /(\d+)\s*오\s*클락/iu;
+  const ocRegex2 = /(\d+)\s*오클락/iu;
+  const addOclock = (s: string) => {
+    const m = s.match(/(\d+)/);
+    if (m) {
+      const n = m[1];
+      titles.add(`${n} o'clock`);
+      titles.add(`${n} O'Clock`);
+      titles.add(`${n} oclock`);
+      titles.add(`${n} Oclock`);
+    }
+  };
+  if (ocRegex.test(T)) addOclock(T);
+  if (ocRegex2.test(T)) addOclock(T);
+  // Spacing variants
+  titles.add(T.replace(/\s+/g, ' ').trim());
+  titles.add(T.replace(/\s*/g, ''));
+
+  const pairs: Array<{ a: string; t: string }> = [];
+  for (const a of artists) {
+    for (const t of titles) {
+      pairs.push({ a, t });
+    }
+  }
+  // Put romanized artist with o'clock variants first for better hit rate
+  return pairs;
+}
+
 export async function searchBugs(artist: string, title: string): Promise<any | null> {
   const timer = new APITimer('Bugs');
   try {
@@ -221,37 +264,51 @@ export async function searchKoreanSites({ artist, title }: { artist: string; tit
   const timer = new APITimer('Korean Sites');
   logger.info(`🇰🇷 Searching Korean sites for: ${artist} - ${title}`);
   try {
-    const searches = [
-      searchBugs(artist, title),
-      searchMelon(artist, title),
-      searchGenie(artist, title)
-    ];
-    const results = await Promise.allSettled(searches);
-    const validResults = results
-      .filter(r => r.status === 'fulfilled' && r.value !== null)
-      .map(r => (r as PromiseFulfilledResult<any>).value);
-    if (validResults.length === 0) {
-      timer.fail('No results from any Korean site');
-      return { success: false, error: 'Could not find lyrics from Korean sites' };
-    }
-    validResults.sort((a, b) => {
-      const confDiff = b.confidence - a.confidence;
-      if (Math.abs(confDiff) > 0.1) return confDiff;
-      return b.lyrics.length - a.lyrics.length;
-    });
-    timer.success(`Found from ${validResults[0].source}: ${validResults[0].lyrics.length} chars`);
-    return {
-      success: true,
-      results: validResults,
-      result: {
-        ...validResults[0],
-        artist,
-        title,
-        language: 'ko',
-        hasTimestamps: false,
-        searchTime: Date.now() - (timer as any).startTime
+    const variants = generateKoVariants(artist, title);
+    for (const v of variants) {
+      const searches = [
+        searchBugs(v.a, v.t),
+        searchMelon(v.a, v.t),
+        searchGenie(v.a, v.t)
+      ];
+      const results = await Promise.allSettled(searches);
+      const validResults = results
+        .filter(r => r.status === 'fulfilled' && r.value !== null)
+        .map(r => (r as PromiseFulfilledResult<any>).value);
+      if (validResults.length > 0) {
+        validResults.sort((a, b) => {
+          const confDiff = b.confidence - a.confidence;
+          if (Math.abs(confDiff) > 0.1) return confDiff;
+          return b.lyrics.length - a.lyrics.length;
+        });
+        timer.success(`Found from ${validResults[0].source} via variant: ${v.a} - ${v.t}`);
+        return {
+          success: true,
+          results: validResults,
+          result: {
+            ...validResults[0],
+            artist: v.a,
+            title: v.t,
+            language: 'ko',
+            hasTimestamps: false,
+            searchTime: Date.now() - (timer as any).startTime
+          }
+        };
       }
-    };
+      // small jitter between variant attempts
+      await new Promise(r => setTimeout(r, 120));
+    }
+    // Fallback to search-engine pipeline (Perplexity+Groq) to bypass bot blocks
+    try {
+      const { searchEngine } = await import('../search-engine/utils');
+      const se = await searchEngine({ artist, title, engine: 'perplexity' });
+      if (se?.success && se.result) {
+        timer.success('Fallback via Search Engine');
+        return se;
+      }
+    } catch {}
+    timer.fail('No results from any Korean site');
+    return { success: false, error: 'Could not find lyrics from Korean sites' };
   } catch (error) {
     timer.fail(error instanceof Error ? error.message : 'Unknown error');
     logger.error('Korean Sites error:', error);
