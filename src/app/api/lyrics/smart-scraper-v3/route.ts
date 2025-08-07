@@ -114,14 +114,21 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // 4. LRCLIB (for synced lyrics)
+    // 4. Gemini Search (NEW)
+    searchPromises.push(
+      import('../gemini-search/utils').then(mod => 
+        mod.geminiSearch({ artist, title })
+      ).catch(() => null)
+    );
+    
+    // 5. LRCLIB (for synced lyrics)
     searchPromises.push(
       import('../lrclib-search/utils').then(mod => 
         mod.searchLRCLIB({ artist, title })
       ).catch(() => null)
     );
     
-    // 5. Original smart scraper as fallback
+    // 6. Smart scraper V2 as fallback
     searchPromises.push(
       import('../smart-scraper-v2/utils').then(mod => 
         mod.smartScraperV2({ artist, title, forceRefresh })
@@ -133,7 +140,7 @@ export async function POST(request: NextRequest) {
     
     // Collect all valid results
     const allResults: any[] = [];
-    const sourceNames = ['llm-search', 'search-engine', 'korean-scrapers', 'lrclib', 'smart-scraper-v2'];
+    const sourceNames = ['llm-search', 'search-engine', 'korean-scrapers', 'gemini-search', 'lrclib', 'smart-scraper-v2'];
     
     searchResults.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
@@ -193,18 +200,22 @@ export async function POST(request: NextRequest) {
     allResults.sort((a, b) => {
       // Priority by source
       const sourcePriority: Record<string, number> = {
-        'llm-search': 10,
-        'search-engine-naver': 9,
-        'search-engine-google': 8,
-        'bugs': 7,
-        'melon': 7,
-        'genie': 7,
-        'lrclib': 6,
-        'claude': 5,
-        'gpt': 5,
-        'groq': 5,
-        'perplexity': 4,
-        'smart-scraper': 3
+        'bugs': 10,
+        'melon': 10,
+        'genie': 10,
+        'search-engine-genius.com': 9,
+        'search-engine-azlyrics.com': 9,
+        'gemini-direct': 8,
+        'lrclib': 8,
+        'smart-scraper-v2-perplexity': 7,
+        'llm-search': 6,
+        'smart-scraper-v2-groq': 5,
+        'smart-scraper-v2-claude': 5,
+        'claude': 4,
+        'gpt': 4,
+        'groq': 4,
+        'perplexity': 3,
+        'smart-scraper': 2
       };
       
       const aPriority = sourcePriority[a.source] || 0;
