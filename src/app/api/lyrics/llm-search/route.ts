@@ -16,13 +16,19 @@ function validateLyricsText(text: string): boolean {
 
 // Whitelist for safe lyric source hosts
 const ALLOWED_HOSTS = [
+  // Korean first
+  'klyrics.net',
+  'colorcodedlyrics.com',
+  // English
   'genius.com',
   'azlyrics.com',
   'lyrics.com',
   'musixmatch.com',
-  'klyrics.net',
-  'colorcodedlyrics.com',
-  'lyricstranslate.com'
+  // Generic
+  'lyricstranslate.com',
+  // Japanese (limited)
+  'uta-net.com',
+  'utaten.com'
 ];
 
 async function fetchUrlForTool(url: string) {
@@ -47,11 +53,32 @@ async function fetchUrlForTool(url: string) {
       .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
       .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
       .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
-      .slice(0, 60000);
+      .slice(0, 45000);
     return { ok: true, url, html: cleaned };
   } catch (e) {
     return { ok: false, error: String(e), url };
   }
+}
+
+// Extract first JSON object from arbitrary text (handles code fences)
+function extractFirstJsonObject(text: string): string | null {
+  if (!text) return null;
+  // Remove common code fences
+  const cleaned = text.replace(/```json[\s\S]*?```/gi, (m) => m.replace(/```json|```/gi, '')).trim();
+  let start = cleaned.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '{') depth++;
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return cleaned.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
 }
 
 // OpenAI tools (function calling) agent that browses and extracts lyrics from HTML
@@ -76,6 +103,9 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
           '- If unknown or blocked, output hasLyrics=false.',
           `- Language hint: ${expectedLang}`,
           '- Final answer MUST be strict JSON: { "artist": "...", "title": "...", "lyrics": "...", "language": "ko|en|ja|...", "hasLyrics": true|false }',
+          '- Never include code fences or commentary in final answer.',
+          '- Validate that lyrics contain multiple lines and >200 chars; otherwise set hasLyrics=false.',
+          '- Site-specific hints: Genius uses containers with data-lyrics-container; Musixmatch often wraps lyrics in mxm-lyrics__content; AZLyrics uses a main div with the lyric text; ColorCodedLyrics often has verses separated by <br> tags.',
           '- Think silently; do not include reasoning.'
         ].join('\n')
       } as any
@@ -94,9 +124,13 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
           'Process:',
           '1) Suggest 1-3 canonical lyrics page URLs from ALLOWED_HOSTS only.',
           '2) Call fetch_url for each candidate sequentially.',
-          '3) Parse HTML and extract ONLY the lyrics text (no titles/credits/annotations).',
+          '3) Parse HTML and extract ONLY the lyrics text (no titles/credits/annotations). Prefer site main lyric container, remove headers/credits.',
           '4) Return FINAL strict JSON as specified. If unavailable, hasLyrics=false.',
           '',
+          'Rules:',
+          '- Do NOT choose search pages or query pages (paths containing /search, ?q=, /tag/, /category/, /artist without a specific song).',
+          '- Prefer domains by language: ko -> klrics.net, colorcodedlyrics.com; ja -> uta-net.com, utaten.com; en -> genius.com, azlyrics.com, lyrics.com, musixmatch.com; else lyricstranslate.com.',
+          '- Prefer URLs that look like canonical song pages (e.g., contains -lyrics or /lyrics/).',
           'ALLOWED_HOSTS:',
           ALLOWED_HOSTS.join(', ')
         ].join('\n')
@@ -119,7 +153,7 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
     ];
 
     const messages: any[] = [...system, ...fewShot, ...user];
-    const maxSteps = 6;
+    const maxSteps = 8;
 
     for (let step = 0; step < maxSteps; step++) {
       const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -134,7 +168,8 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
           tools,
           tool_choice: 'auto',
           temperature: 0.0,
-          max_tokens: 7000
+          max_tokens: 7000,
+          response_format: { type: 'json_object' }
         })
       });
 
@@ -167,7 +202,8 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
       const content = msg?.content || '';
       if (content) {
         try {
-          const parsed = JSON.parse(content);
+          const jsonText = extractFirstJsonObject(content) || content;
+          const parsed = JSON.parse(jsonText);
           if (parsed && typeof parsed === 'object' && 'hasLyrics' in parsed) {
             if (parsed.hasLyrics && parsed.lyrics) {
               const lyrics = normalizeLyrics(String(parsed.lyrics));
