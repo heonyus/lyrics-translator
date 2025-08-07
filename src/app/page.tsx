@@ -472,15 +472,15 @@ export default function MobileDashboard() {
         </div>
       )}
       
-      {/* Lyrics Editor Modal */}
+      {/* Lyrics Editor Modal - Full Screen */}
       {showLyricsEditor && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-gray-900 rounded-2xl p-6 max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-white">가사 편집기 (전체보기)</h2>
+        <div className="fixed inset-0 bg-black/95 z-50">
+          <div className="h-full w-full bg-gray-900 flex flex-col">
+            <div className="flex justify-between items-center px-8 py-6 border-b border-gray-800">
+              <h2 className="text-2xl font-bold text-white">가사 편집기 (전체보기)</h2>
               <button
                 onClick={() => setShowLyricsEditor(false)}
-                className="text-gray-400 hover:text-white text-xl"
+                className="text-gray-400 hover:text-white text-3xl p-2 hover:bg-gray-800 rounded-lg transition-colors"
               >
                 ✕
               </button>
@@ -488,10 +488,10 @@ export default function MobileDashboard() {
             <textarea
               value={editedLyrics}
               onChange={(e) => setEditedLyrics(e.target.value)}
-              className="flex-1 bg-black/50 text-white p-4 rounded-lg font-mono text-sm resize-none border border-white/10"
+              className="flex-1 bg-black/30 text-white px-8 py-6 font-mono text-base resize-none border-0 focus:outline-none"
               placeholder="가사를 편집하세요..."
             />
-            <div className="flex gap-2 mt-4">
+            <div className="flex gap-3 px-8 py-6 border-t border-gray-800 bg-gray-900">
               <button
                 onClick={() => {
                   const lines = editedLyrics.split('\n').filter(l => l.trim());
@@ -500,13 +500,13 @@ export default function MobileDashboard() {
                   setShowLyricsEditor(false);
                   toast.success('가사가 적용되었습니다');
                 }}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg"
+                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium text-lg transition-colors"
               >
                 적용
               </button>
               <button
                 onClick={() => setShowLyricsEditor(false)}
-                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg"
+                className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium text-lg transition-colors"
               >
                 취소
               </button>
