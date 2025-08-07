@@ -1,0 +1,28 @@
+{
+  "name": "TikTok Live 가사 오버레이",
+  "short_name": "가사 오버레이",
+  "description": "OBS용 1080x1920 가사 오버레이",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/obs/mobile-live?standalone=true",
+  "scope": "/",
+  "theme_color": "#1a0033",
+  "background_color": "#1a0033",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "window": {
+    "width": 1080,
+    "height": 1920,
+    "resizable": false
+  }
+}

@@ -262,10 +262,34 @@ async function parseLyricsWithGroq(html: string, artist: string, title: string, 
   }
   
   try {
-    // Truncate HTML if too long (keep relevant parts)
-    const truncatedHtml = html.length > 50000 
-      ? html.substring(0, 25000) + '...[truncated]...' + html.substring(html.length - 25000)
-      : html;
+    // Smart HTML truncation to avoid Groq API 413 error
+    const MAX_HTML_LENGTH = 30000;
+    let processedHtml = html;
+    
+    if (html.length > MAX_HTML_LENGTH) {
+      logger.warning(`HTML too large (${html.length} chars), smart truncating to ~${MAX_HTML_LENGTH}`);
+      
+      // Try to find lyrics section
+      const lyricsKeywords = ['lyrics', '가사', '歌詞', 'lyric-body', 'lyrics-content'];
+      let bestStartIndex = 0;
+      
+      for (const keyword of lyricsKeywords) {
+        const index = html.toLowerCase().indexOf(keyword);
+        if (index > 0) {
+          bestStartIndex = Math.max(0, index - 2000);
+          break;
+        }
+      }
+      
+      // Extract the most relevant section
+      processedHtml = html.substring(bestStartIndex, Math.min(bestStartIndex + MAX_HTML_LENGTH, html.length));
+      
+      // If still too long, take middle section
+      if (processedHtml.length > MAX_HTML_LENGTH) {
+        const start = Math.floor(html.length / 3);
+        processedHtml = html.substring(start, start + MAX_HTML_LENGTH);
+      }
+    }
     
     const systemPrompt = `You are a lyrics extractor. Extract ONLY the song lyrics from HTML.
 Rules:
@@ -276,7 +300,7 @@ Rules:
 5. If timestamps exist (like [00:00.00]), keep them
 6. Return JSON: { "lyrics": "full lyrics here", "hasTimestamps": boolean, "metadata": {} }`;
     
-    const userPrompt = `Extract the complete lyrics for "${title}" by "${artist}" from this HTML:\n\n${truncatedHtml}`;
+    const userPrompt = `Extract the complete lyrics for "${title}" by "${artist}" from this HTML:\n\n${processedHtml}`;
     
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',

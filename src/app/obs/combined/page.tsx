@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import '../obs.css';
 
 export default function CombinedOBSPage() {
   const searchParams = useSearchParams();
@@ -84,9 +85,49 @@ export default function CombinedOBSPage() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
+  // Calculate scale based on viewport
+  const [scale, setScale] = useState(1);
+  
+  useEffect(() => {
+    const calculateScale = () => {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const targetWidth = 1920;
+      const targetHeight = 1080;
+      
+      // Calculate scale to fit viewport while maintaining aspect ratio
+      const scaleX = viewportWidth / targetWidth;
+      const scaleY = viewportHeight / targetHeight;
+      const newScale = Math.min(scaleX, scaleY);
+      
+      setScale(newScale);
+    };
+    
+    calculateScale();
+    window.addEventListener('resize', calculateScale);
+    return () => window.removeEventListener('resize', calculateScale);
+  }, []);
+
   return (
-    <div className="h-screen relative" style={{ backgroundColor: chromaKey }}>
-      <div className="absolute inset-0 flex items-center justify-center">
+    <div 
+      className="combined-overlay flex items-center justify-center"
+      style={{ 
+        backgroundColor: chromaKey,
+        width: '100vw',
+        height: '100vh',
+        overflow: 'hidden'
+      }}
+    >
+      <div 
+        style={{ 
+          width: '1920px',
+          height: '1080px',
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+          position: 'relative'
+        }}
+      >
+        <div className="absolute inset-0 flex items-center justify-center">
         <div className="text-center px-10 max-w-[90%]">
           {/* Original Line - Only show if enabled */}
           {showOriginal && (
@@ -134,6 +175,7 @@ export default function CombinedOBSPage() {
             )
           ))}
         </div>
+      </div>
       </div>
     </div>
   );

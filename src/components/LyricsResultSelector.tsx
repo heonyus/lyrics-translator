@@ -23,13 +23,20 @@ interface LyricsResult {
   lyrics: string;
   syncedLyrics?: string;
   source: string;
-  confidence: number;
-  title: string;
-  artist: string;
-  searchTime: number;
+  confidence?: number;
+  finalScore?: number;
+  validation?: {
+    isValid: boolean;
+    confidence: number;
+    issues: string[];
+  };
+  title?: string;
+  artist?: string;
+  searchTime?: number;
   url?: string;
   language?: string;
   hasTimestamps?: boolean;
+  priority?: number;
 }
 
 interface LyricsResultSelectorProps {
@@ -48,12 +55,30 @@ export default function LyricsResultSelector({
   
   // Sort results by quality
   const sortedResults = [...results].sort((a, b) => {
+    // Use finalScore if available
+    if (a.finalScore !== undefined && b.finalScore !== undefined) {
+      return b.finalScore - a.finalScore;
+    }
+    
     // Prioritize synced lyrics
     if (a.syncedLyrics && !b.syncedLyrics) return -1;
     if (!a.syncedLyrics && b.syncedLyrics) return 1;
     
+    // Then by validation confidence
+    if (a.validation && b.validation) {
+      const confDiff = b.validation.confidence - a.validation.confidence;
+      if (Math.abs(confDiff) > 0.1) return confDiff;
+    }
+    
+    // Then by priority
+    if (a.priority !== undefined && b.priority !== undefined) {
+      return b.priority - a.priority;
+    }
+    
     // Then by confidence
-    const confDiff = b.confidence - a.confidence;
+    const aConf = a.confidence ?? a.validation?.confidence ?? 0;
+    const bConf = b.confidence ?? b.validation?.confidence ?? 0;
+    const confDiff = bConf - aConf;
     if (Math.abs(confDiff) > 0.1) return confDiff;
     
     // Then by length
@@ -133,9 +158,11 @@ export default function LyricsResultSelector({
                             {getSourceIcon(result.source)}
                             <div>
                               <p className="font-medium text-sm">{result.source}</p>
-                              <p className="text-xs text-gray-400">
-                                {result.artist} - {result.title}
-                              </p>
+                              {(result.artist || result.title) && (
+                                <p className="text-xs text-gray-400">
+                                  {result.artist} - {result.title}
+                                </p>
+                              )}
                             </div>
                           </div>
                           {index === 0 && (
@@ -149,10 +176,17 @@ export default function LyricsResultSelector({
                           {/* Confidence */}
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-gray-400">Confidence</span>
-                            <span className={getConfidenceColor(result.confidence)}>
-                              {(result.confidence * 100).toFixed(0)}%
+                            <span className={getConfidenceColor(result.confidence ?? result.validation?.confidence ?? 0)}>
+                              {((result.confidence ?? result.validation?.confidence ?? 0) * 100).toFixed(0)}%
                             </span>
                           </div>
+                          
+                          {/* Validation Issues */}
+                          {result.validation && result.validation.issues.length > 0 && (
+                            <div className="text-xs text-yellow-500">
+                              ⚠️ {result.validation.issues[0]}
+                            </div>
+                          )}
                           
                           {/* Features */}
                           <div className="flex gap-1 flex-wrap">
@@ -171,7 +205,8 @@ export default function LyricsResultSelector({
                           
                           {/* Stats */}
                           <div className="text-xs text-gray-500">
-                            {result.lyrics.length} chars • {result.searchTime.toFixed(1)}s
+                            {result.lyrics.length} chars
+                            {result.searchTime && ` • ${result.searchTime.toFixed(1)}s`}
                           </div>
                         </div>
                       </CardContent>
@@ -191,9 +226,11 @@ export default function LyricsResultSelector({
                       {getSourceIcon(selectedResult.source)}
                       <div>
                         <p className="font-medium">{selectedResult.source}</p>
-                        <p className="text-sm text-gray-400">
-                          {selectedResult.artist} - {selectedResult.title}
-                        </p>
+                        {(selectedResult.artist || selectedResult.title) && (
+                          <p className="text-sm text-gray-400">
+                            {selectedResult.artist} - {selectedResult.title}
+                          </p>
+                        )}
                       </div>
                     </div>
                     
@@ -225,18 +262,20 @@ export default function LyricsResultSelector({
                     </div>
                     <div>
                       <span className="text-gray-400">Confidence:</span>
-                      <span className={`ml-2 ${getConfidenceColor(selectedResult.confidence)}`}>
-                        {(selectedResult.confidence * 100).toFixed(0)}%
+                      <span className={`ml-2 ${getConfidenceColor(selectedResult.confidence ?? selectedResult.validation?.confidence ?? 0)}`}>
+                        {((selectedResult.confidence ?? selectedResult.validation?.confidence ?? 0) * 100).toFixed(0)}%
                       </span>
                     </div>
                     <div>
                       <span className="text-gray-400">Length:</span>
                       <span className="ml-2">{selectedResult.lyrics.length} characters</span>
                     </div>
-                    <div>
-                      <span className="text-gray-400">Search Time:</span>
-                      <span className="ml-2">{selectedResult.searchTime.toFixed(2)}s</span>
-                    </div>
+                    {selectedResult.searchTime && (
+                      <div>
+                        <span className="text-gray-400">Search Time:</span>
+                        <span className="ml-2">{selectedResult.searchTime.toFixed(2)}s</span>
+                      </div>
+                    )}
                     {selectedResult.syncedLyrics && (
                       <div className="col-span-2">
                         <span className="text-gray-400">Features:</span>

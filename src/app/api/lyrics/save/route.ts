@@ -4,11 +4,19 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { artist, title, lyrics, album, metadata } = await request.json();
+    const body = await request.json();
+    
+    // Support both formats: legacy (lyrics) and new (lrc_content)
+    const artist = body.artist;
+    const title = body.title;
+    const lyrics = body.lyrics || body.lrc_content;
+    const album = body.album;
+    const metadata = body.metadata;
     
     if (!artist || !title || !lyrics) {
+      logger.error('Save Lyrics', `Missing required fields - artist: ${!!artist}, title: ${!!title}, lyrics: ${!!lyrics}`);
       return NextResponse.json(
-        { success: false, error: 'Artist, title, and lyrics are required' },
+        { success: false, error: 'Artist, title, and lyrics are required', received: { artist: !!artist, title: !!title, lyrics: !!lyrics } },
         { status: 400 }
       );
     }
@@ -33,7 +41,6 @@ export async function POST(request: NextRequest) {
           lrc_content: lyrics,
           album: album || null,
           metadata: metadata || {},
-          source: 'user_verified',
           updated_at: new Date().toISOString()
         })
         .eq('id', existing.id)
@@ -43,7 +50,7 @@ export async function POST(request: NextRequest) {
       if (error) {
         logger.error('Update lyrics', error);
         return NextResponse.json(
-          { success: false, error: 'Failed to update lyrics' },
+          { success: false, error: 'Failed to update lyrics', details: error.message },
           { status: 500 }
         );
       }
@@ -60,7 +67,6 @@ export async function POST(request: NextRequest) {
           album: album || null,
           lrc_content: lyrics,
           metadata: metadata || {},
-          source: 'user_verified',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
@@ -70,7 +76,7 @@ export async function POST(request: NextRequest) {
       if (error) {
         logger.error('Insert lyrics', error);
         return NextResponse.json(
-          { success: false, error: 'Failed to save lyrics' },
+          { success: false, error: 'Failed to save lyrics', details: error.message },
           { status: 500 }
         );
       }

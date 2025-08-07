@@ -189,13 +189,18 @@ export const logger = {
   },
   
   summary: (totalAPIs: number, successCount: number, timeMs: number) => {
-    const emoji = successCount === 0 ? '😔' : successCount === totalAPIs ? '🎉' : '✨';
-    const successRate = totalAPIs > 0 ? (successCount / totalAPIs * 100).toFixed(0) : 0;
+    // Ensure values are valid
+    const validTotal = Math.max(0, totalAPIs || 0);
+    const validSuccess = Math.max(0, Math.min(successCount || 0, validTotal));
+    
+    const emoji = validSuccess === 0 ? '😔' : validSuccess === validTotal ? '🎉' : '✨';
+    const successRate = validTotal > 0 ? (validSuccess / validTotal * 100).toFixed(0) : 0;
     
     // Create success bar
     const barLength = 30;
-    const filled = Math.floor((successCount / totalAPIs) * barLength);
-    const bar = colors.green + '█'.repeat(filled) + colors.red + '░'.repeat(barLength - filled) + colors.reset;
+    const filled = validTotal > 0 ? Math.max(0, Math.floor((validSuccess / validTotal) * barLength)) : 0;
+    const empty = Math.max(0, barLength - filled);
+    const bar = colors.green + '█'.repeat(filled) + colors.red + '░'.repeat(empty) + colors.reset;
     
     console.log('\n' + colors.bgCyan + colors.black + ' 📊 SEARCH SUMMARY ' + colors.reset);
     console.log(colors.cyan + '═'.repeat(60) + colors.reset);

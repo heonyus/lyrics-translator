@@ -18,6 +18,7 @@ import { WebSocketControl } from '@/components/websocket/WebSocketControl';
 import { LyricsEditor } from '@/components/LyricsEditor';
 import { useImprovedLyrics } from '@/domains/lyrics/hooks/useImprovedLyrics';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import MobileLiveControlPanel from '@/components/mobile-live/ControlPanel';
 
 export default function ControlPage() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -124,10 +125,11 @@ export default function ControlPage() {
       <h1 className="text-3xl font-bold mb-6">컨트롤 패널</h1>
       
       <Tabs defaultValue="search" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="search">검색 및 선택</TabsTrigger>
           <TabsTrigger value="editor">가사 편집</TabsTrigger>
           <TabsTrigger value="settings">오버레이 설정</TabsTrigger>
+          <TabsTrigger value="mobile">모바일 라이브</TabsTrigger>
           <TabsTrigger value="preview">미리보기 및 내보내기</TabsTrigger>
           <TabsTrigger value="websocket">실시간 동기화</TabsTrigger>
         </TabsList>
@@ -389,6 +391,10 @@ export default function ControlPage() {
             onPlay={play}
             onPause={pause}
           />
+        </TabsContent>
+        
+        <TabsContent value="mobile" className="space-y-4">
+          <MobileLiveControlPanel />
         </TabsContent>
         
         <TabsContent value="websocket" className="space-y-4">

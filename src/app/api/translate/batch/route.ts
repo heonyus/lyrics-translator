@@ -22,18 +22,28 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // 언어 코드 매핑
+    // 언어 코드 매핑 (20개 언어)
     const languageMap: { [key: string]: string } = {
       'en': 'English',
+      'ko': 'Korean',
       'ja': 'Japanese',
       'zh': 'Chinese',
       'es': 'Spanish',
+      'id': 'Indonesian',
+      'th': 'Thai',
+      'pt': 'Portuguese',
+      'ar': 'Arabic',
+      'hi': 'Hindi',
+      'vi': 'Vietnamese',
       'fr': 'French',
-      'ko': 'Korean',
       'de': 'German',
       'ru': 'Russian',
-      'pt': 'Portuguese',
-      'it': 'Italian'
+      'it': 'Italian',
+      'tr': 'Turkish',
+      'pl': 'Polish',
+      'nl': 'Dutch',
+      'ms': 'Malay',
+      'tl': 'Tagalog/Filipino'
     };
     
     const targetLang = languageMap[targetLanguage] || 'English';
