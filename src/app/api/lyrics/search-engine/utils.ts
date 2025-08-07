@@ -1,11 +1,18 @@
 import { logger, APITimer } from '@/lib/logger';
 
-const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+let PERPLEXITY_API_KEY: string | undefined;
+let GROQ_API_KEY: string | undefined;
+async function loadKeys() {
+  if (typeof window !== 'undefined') return;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  PERPLEXITY_API_KEY = (await getSecret('perplexity')) || process.env.PERPLEXITY_API_KEY;
+  GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY;
+}
 
 // Search for lyrics URLs using Perplexity
 async function searchWithPerplexity(artist: string, title: string): Promise<string[]> {
   const timer = new APITimer('Perplexity Search');
+  await loadKeys();
   
   try {
     const query = `${artist} ${title} lyrics site:genius.com OR site:azlyrics.com OR site:lyrics.com OR site:musixmatch.com`;
@@ -17,15 +24,11 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'sonar-small-online',
+        model: 'sonar-medium-online',
         messages: [
           {
-            role: 'system',
-            content: 'You are a helpful assistant that finds lyrics URLs. Return only URLs, one per line.'
-          },
-          {
             role: 'user',
-            content: `Find the lyrics page URL for "${artist} - ${title}". Search on Genius, AZLyrics, LyricFind, or other lyrics sites. Return only the direct URLs to the lyrics pages.`
+            content: `Return only direct lyrics page URLs (one per line) for "${artist} - ${title}" from Genius, AZLyrics, Musixmatch, or Lyrics.com.`
           }
         ],
         temperature: 0.1,
@@ -34,6 +37,34 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
     });
     
     if (!response.ok) {
+      // retry on 429/400
+      if (response.status === 429 || response.status === 400) {
+        await new Promise(r => setTimeout(r, 600));
+        const retry = await fetch('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'sonar-small-online',
+            messages: [
+              { role: 'user', content: `Only output URLs. Find lyrics page URLs for "${artist} - ${title}". Sites: Genius, AZLyrics, Musixmatch, Lyrics.com.` }
+            ],
+            temperature: 0.1,
+            max_tokens: 500
+          })
+        });
+        if (!retry.ok) {
+          timer.fail(`HTTP ${retry.status}`);
+          return [];
+        }
+        const retryData = await retry.json();
+        const retryContent = retryData.choices?.[0]?.message?.content || '';
+        const retryUrls = retryContent.match(/https?:\/\/[^\s]+/g) || [];
+        timer.success(`Found ${retryUrls.length} URLs`);
+        return retryUrls;
+      }
       timer.fail(`HTTP ${response.status}`);
       return [];
     }
@@ -56,6 +87,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
 // Parse HTML and extract lyrics using Groq
 async function extractLyricsWithGroq(html: string, url: string): Promise<string | null> {
   const timer = new APITimer('Groq Extract');
+  await loadKeys();
   
   try {
     // Clean HTML to reduce tokens
@@ -167,6 +199,8 @@ export async function searchEngine({
   logger.info(`🔍 Search engine (${engine}): ${artist} - ${title}`);
   
   try {
+    // Ensure keys are loaded before checks
+    await loadKeys();
     // Check if APIs are available
     if (!GROQ_API_KEY) {
       timer.skip('Groq API key missing');
@@ -188,7 +222,8 @@ export async function searchEngine({
     }
     
     // Step 1: Search for URLs with Perplexity
-    const urls = await searchWithPerplexity(artist, title);
+  const urls = await searchWithPerplexity(artist, title);
+  await new Promise(r => setTimeout(r, 120));
     
     if (urls.length === 0) {
       timer.fail('No URLs found');
@@ -202,12 +237,14 @@ export async function searchEngine({
     
     // Step 2: Fetch and extract lyrics from each URL
     const fetchPromises = urls.slice(0, 3).map(url => fetchAndExtractLyrics(url));
-    const results = await Promise.allSettled(fetchPromises);
+  const results = [] as any[];
+  for (const p of fetchPromises) {
+    results.push(await p);
+    await new Promise(r => setTimeout(r, 120));
+  }
     
     // Collect valid results
-    const validResults = results
-      .filter(r => r.status === 'fulfilled' && r.value !== null)
-      .map(r => (r as PromiseFulfilledResult<any>).value);
+  const validResults = results.filter((r: any) => r).map((r: any) => r);
     
     if (validResults.length === 0) {
       timer.fail('No lyrics extracted from URLs');

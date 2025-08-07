@@ -1,12 +1,20 @@
 import { logger, APITimer } from '@/lib/logger';
 
-const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
+let PERPLEXITY_API_KEY: string | undefined;
+let GROQ_API_KEY: string | undefined;
+let CLAUDE_API_KEY: string | undefined;
+async function loadKeys() {
+  if (typeof window !== 'undefined') return;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  PERPLEXITY_API_KEY = (await getSecret('perplexity')) || process.env.PERPLEXITY_API_KEY;
+  GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY;
+  CLAUDE_API_KEY = (await getSecret('anthropic')) || process.env.CLAUDE_API_KEY;
+}
 
 // Search using Perplexity to find lyrics
 async function searchWithPerplexity(artist: string, title: string): Promise<string | null> {
   const timer = new APITimer('Perplexity Scraper');
+  await loadKeys();
   
   if (!PERPLEXITY_API_KEY) {
     timer.skip('Perplexity API key not configured');
@@ -62,6 +70,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
 // Search using Claude as backup
 async function searchWithClaude(artist: string, title: string): Promise<string | null> {
   const timer = new APITimer('Claude Scraper');
+  await loadKeys();
   
   if (!CLAUDE_API_KEY) {
     timer.skip('Claude API key not configured');
@@ -77,7 +86,7 @@ async function searchWithClaude(artist: string, title: string): Promise<string |
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
+        model: 'claude-3-5-haiku-20241022',
         max_tokens: 4000,
         messages: [
           {
@@ -97,7 +106,7 @@ async function searchWithClaude(artist: string, title: string): Promise<string |
     const data = await response.json();
     const lyrics = data.content?.[0]?.text || '';
     
-    if (lyrics && !lyrics.includes('LYRICS_NOT_FOUND') && lyrics.length > 200) {
+    if (lyrics && !lyrics.includes('LYRICS_NOT_FOUND') && lyrics.length > 180) {
       timer.success(`Found ${lyrics.length} chars`);
       return lyrics;
     }
@@ -114,6 +123,7 @@ async function searchWithClaude(artist: string, title: string): Promise<string |
 // Use Groq to search and clean lyrics
 async function searchWithGroq(artist: string, title: string): Promise<string | null> {
   const timer = new APITimer('Groq Scraper');
+  await loadKeys();
   
   if (!GROQ_API_KEY) {
     timer.skip('Groq API key not configured');
@@ -152,7 +162,7 @@ async function searchWithGroq(artist: string, title: string): Promise<string | n
     const data = await response.json();
     const lyrics = data.choices?.[0]?.message?.content || '';
     
-    if (lyrics && !lyrics.includes('LYRICS_NOT_AVAILABLE') && lyrics.length > 200) {
+    if (lyrics && !lyrics.includes('LYRICS_NOT_AVAILABLE') && lyrics.length > 180) {
       timer.success(`Found ${lyrics.length} chars`);
       return lyrics;
     }

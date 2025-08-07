@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react';
 import { Search, Copy, Monitor, Smartphone, Music, Settings, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ExternalLink, Edit, RefreshCw, FileText, Eye, Globe, Loader } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import LyricsResultSelector from '@/components/LyricsResultSelector';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 
 export default function MobileDashboard() {
   // Search & Song
@@ -565,27 +568,17 @@ export default function MobileDashboard() {
             🎤 Live Karaoke
           </h1>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setOverlayMode(overlayMode === 'mobile' ? 'desktop' : 'mobile')}
-              className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
-              title={`현재: ${overlayMode === 'mobile' ? '모바일' : '데스크톱'} 모드`}
-            >
+            <Button variant="ghost" onClick={() => setOverlayMode(overlayMode === 'mobile' ? 'desktop' : 'mobile')} title={`현재: ${overlayMode === 'mobile' ? '모바일' : '데스크톱'} 모드`}>
               {overlayMode === 'mobile' ? <Smartphone className="w-5 h-5 text-white" /> : <Monitor className="w-5 h-5 text-white" />}
-            </button>
-            <button
-              onClick={openOBSWindow}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex items-center gap-2"
-            >
+            </Button>
+            <Button onClick={openOBSWindow} className="bg-green-600 hover:bg-green-700">
               <ExternalLink className="w-4 h-4" />
               OBS 창 열기
-            </button>
-            <button
-              onClick={copyOverlayUrl}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium flex items-center gap-2"
-            >
+            </Button>
+            <Button onClick={copyOverlayUrl} className="bg-purple-600 hover:bg-purple-700">
               <Copy className="w-4 h-4" />
               URL 복사
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -595,20 +588,15 @@ export default function MobileDashboard() {
         <form onSubmit={handleSearch} className="mb-6">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
+            <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="아티스트, 제목, 또는 자연어로 검색..."
-              className="w-full pl-12 pr-32 py-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              className="w-full pl-12 pr-32 py-6 text-base"
             />
-            <button
-              type="submit"
-              disabled={isSearching}
-              className="absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-xl font-medium"
-            >
+            <Button type="submit" disabled={isSearching} className="absolute right-2 top-1/2 -translate-y-1/2">
               {isSearching ? '검색중...' : '검색'}
-            </button>
+            </Button>
           </div>
         </form>
 
@@ -616,7 +604,7 @@ export default function MobileDashboard() {
           {/* Left: Current Song & Player */}
           <div className="lg:col-span-2 space-y-4">
             {/* Now Playing Card */}
-            <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl p-6">
+            <Card className="bg-white/5 border-white/10 p-6">
               <div className="flex gap-6">
                 {/* Album Cover */}
                 <div className="flex-shrink-0">
@@ -643,50 +631,28 @@ export default function MobileDashboard() {
                   
                   {currentSong.title && (
                     <div className="flex gap-2 flex-wrap">
-                      <button
-                        onClick={handleReSearch}
-                        disabled={isSearching}
-                        className="px-3 py-1 bg-blue-600/50 hover:bg-blue-600/70 text-white rounded-lg text-sm flex items-center gap-1"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        재검색
-                      </button>
-                      <button
-                        onClick={() => setShowLyricsEditor(true)}
-                        className="px-3 py-1 bg-yellow-600/50 hover:bg-yellow-600/70 text-white rounded-lg text-sm flex items-center gap-1"
-                      >
-                        <Edit className="w-3 h-3" />
-                        가사 편집
-                      </button>
-                      <button
-                        onClick={() => fetchAlbumInfo(currentSong.artist, currentSong.title)}
-                        className="px-3 py-1 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm"
-                      >
-                        앨범 정보
-                      </button>
-                      <button
-                        onClick={() => translateLyrics(currentSong.lyricsLines)}
-                        disabled={isTranslating}
-                        className="px-3 py-1 bg-purple-600/50 hover:bg-purple-600/70 text-white rounded-lg text-sm"
-                      >
+                      <Button variant="secondary" onClick={handleReSearch} disabled={isSearching}>
+                        <RefreshCw className="w-3 h-3" /> 재검색
+                      </Button>
+                      <Button variant="secondary" onClick={() => setShowLyricsEditor(true)}>
+                        <Edit className="w-3 h-3" /> 가사 편집
+                      </Button>
+                      <Button variant="ghost" onClick={() => fetchAlbumInfo(currentSong.artist, currentSong.title)}>앨범 정보</Button>
+                      <Button onClick={() => translateLyrics(currentSong.lyricsLines)} disabled={isTranslating}>
                         {isTranslating ? '번역중...' : '번역'}
-                      </button>
-                      <button
-                        onClick={openOBSWindow}
-                        className="px-3 py-1 bg-green-600/50 hover:bg-green-600/70 text-white rounded-lg text-sm flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        OBS 시작
-                      </button>
+                      </Button>
+                      <Button className="bg-green-600 hover:bg-green-700" onClick={openOBSWindow}>
+                        <ExternalLink className="w-3 h-3" /> OBS 시작
+                      </Button>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
+            </Card>
 
             {/* Lyrics Display */}
             {currentSong.lyricsLines.length > 0 && (
-              <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl p-8">
+              <Card className="bg-white/5 border-white/10 p-8">
                 {/* Action Buttons */}
                 <div className="flex justify-between items-center mb-4">
                   <button
@@ -781,39 +747,21 @@ export default function MobileDashboard() {
                 
                 {/* Playback Controls */}
                 <div className="flex justify-center gap-2">
-                  <button
-                    onClick={prevLine}
-                    className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
-                  >
-                    <ChevronLeft className="w-5 h-5 text-white" />
-                  </button>
-                  <button
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    className="p-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl"
-                  >
+                  <Button variant="ghost" onClick={prevLine}><ChevronLeft className="w-5 h-5" /></Button>
+                  <Button className="bg-purple-600 hover:bg-purple-700" onClick={() => setIsPlaying(!isPlaying)}>
                     {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                  </button>
-                  <button
-                    onClick={nextLine}
-                    className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
-                  >
-                    <ChevronRight className="w-5 h-5 text-white" />
-                  </button>
-                  <button
-                    onClick={resetPlayback}
-                    className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-colors"
-                  >
-                    <RotateCcw className="w-5 h-5 text-white" />
-                  </button>
+                  </Button>
+                  <Button variant="ghost" onClick={nextLine}><ChevronRight className="w-5 h-5" /></Button>
+                  <Button variant="ghost" onClick={resetPlayback}><RotateCcw className="w-5 h-5" /></Button>
                 </div>
-              </div>
+              </Card>
             )}
           </div>
 
           {/* Right: Settings */}
           <div className="space-y-4">
             {/* Overlay Settings */}
-            <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl p-6">
+            <Card className="bg-white/5 border-white/10 p-6">
               <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                 <Settings className="w-5 h-5" />
                 오버레이 설정
@@ -979,10 +927,10 @@ export default function MobileDashboard() {
                   ))}
                 </div>
               </div>
-            </div>
+            </Card>
 
             {/* OBS Quick Actions */}
-            <div className="bg-green-900/30 backdrop-blur-lg border border-green-400/30 rounded-2xl p-4">
+            <Card className="bg-green-900/30 border-green-400/30 p-4">
               <h4 className="text-white font-semibold mb-3">🚀 빠른 실행</h4>
               <div className="space-y-2">
                 <button
@@ -1007,10 +955,10 @@ export default function MobileDashboard() {
                   크로마키: {settings.chromaKey}
                 </p>
               </div>
-            </div>
+            </Card>
             
             {/* OBS Info */}
-            <div className="bg-blue-900/30 backdrop-blur-lg border border-blue-400/30 rounded-2xl p-4">
+            <Card className="bg-blue-900/30 border-blue-400/30 p-4">
               <h4 className="text-white font-semibold mb-2">📡 OBS 설정 가이드</h4>
               <div className="text-sm text-gray-300 space-y-1">
                 <p>1. 브라우저 소스 추가</p>
@@ -1018,7 +966,7 @@ export default function MobileDashboard() {
                 <p>3. 크기: {overlayMode === 'mobile' ? '1080×1920' : '1920×1080'}</p>
                 <p>4. 크로마키 필터: {settings.chromaKey}</p>
               </div>
-            </div>
+            </Card>
           </div>
         </div>
         

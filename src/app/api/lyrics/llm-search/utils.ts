@@ -2,7 +2,8 @@ import { logger, APITimer } from '@/lib/logger';
 
 // Search with Claude
 async function searchWithClaude(artist: string, title: string): Promise<any | null> {
-  const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  const CLAUDE_API_KEY = (await getSecret('anthropic')) || process.env.CLAUDE_API_KEY;
   
   if (!CLAUDE_API_KEY) {
     return null;
@@ -19,23 +20,17 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
+        model: 'claude-3-5-haiku-20241022',
         max_tokens: 4000,
         messages: [
           {
             role: 'user',
-            content: `Find the complete lyrics for "${title}" by "${artist}".
-
-Return the response in this JSON format:
-{
-  "artist": "${artist}",
-  "title": "${title}",
-  "lyrics": "complete lyrics with \\n for line breaks",
-  "language": "ko/en/ja/etc",
-  "hasLyrics": true/false
-}
-
-If you cannot find the lyrics, set hasLyrics to false.`
+            content: [
+              {
+                type: 'text',
+                text: `Find the complete lyrics for "${title}" by "${artist}".\n\nReturn the response in this JSON format:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "complete lyrics with \\n for line breaks",\n  "language": "ko/en/ja/etc",\n  "hasLyrics": true/false\n}\n\nIf you cannot find the lyrics, set hasLyrics to false.`
+              }
+            ]
           }
         ]
       })
@@ -80,7 +75,8 @@ If you cannot find the lyrics, set hasLyrics to false.`
 
 // Search with GPT
 async function searchWithGPT(artist: string, title: string): Promise<any | null> {
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  const OPENAI_API_KEY = (await getSecret('openai')) || process.env.OPENAI_API_KEY;
   
   if (!OPENAI_API_KEY) {
     return null;
@@ -137,7 +133,8 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
 
 // Search with Groq
 async function searchWithGroq(artist: string, title: string): Promise<any | null> {
-  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  const GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY;
   
   if (!GROQ_API_KEY) {
     return null;
@@ -194,28 +191,28 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
 
 export async function llmSearch({ artist, title }: { artist: string; title: string }) {
   logger.info(`🤖 LLM Search: ${artist} - ${title}`);
-  
-  // Try all LLMs in parallel
-  const results = await Promise.allSettled([
-    searchWithGroq(artist, title),
-    searchWithGPT(artist, title),
-    searchWithClaude(artist, title)
-  ]);
-  
-  // Find best result
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value) {
-      return {
-        success: true,
-        result: {
-          ...result.value,
-          source: 'llm-search',
-          confidence: 0.8
-        }
-      };
+  // Call providers sequentially to reduce 429 rate limits
+  const providers = [searchWithGroq, searchWithGPT, searchWithClaude];
+  for (const fn of providers) {
+    try {
+      const val = await fn(artist, title);
+      if (val) {
+        return {
+          success: true,
+          result: {
+            ...val,
+            source: 'llm-search',
+            confidence: 0.8
+          }
+        };
+      }
+      // small jitter between calls to avoid burst
+      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 200)));
+    } catch {
+      // continue to next provider
     }
   }
-  
+
   return {
     success: false,
     message: 'No lyrics found from LLM search'

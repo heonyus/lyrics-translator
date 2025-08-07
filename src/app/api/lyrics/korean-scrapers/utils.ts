@@ -93,7 +93,7 @@ async function searchBugs(artist: string, title: string): Promise<any | null> {
     
     const lyrics = extractTextFromHTML(lyricsMatch[1]);
     
-    if (lyrics && lyrics.length > 100) {
+    if (lyrics && lyrics.length > 60) {
       timer.success(`Found ${lyrics.length} chars`);
       return {
         lyrics,
@@ -127,7 +127,9 @@ async function searchMelon(artist: string, title: string): Promise<any | null> {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ko-KR,ko;q=0.9',
-        'Cookie': 'PCID=1234567890' // Melon requires some cookie
+        'Cookie': 'PCID=1234567890', // Melon requires some cookie
+        'Referer': 'https://www.melon.com/',
+        'Cache-Control': 'no-cache'
       }
     });
     
@@ -154,7 +156,9 @@ async function searchMelon(artist: string, title: string): Promise<any | null> {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ko-KR,ko;q=0.9',
-        'Cookie': 'PCID=1234567890'
+        'Cookie': 'PCID=1234567890',
+        'Referer': searchUrl,
+        'Cache-Control': 'no-cache'
       }
     });
     
@@ -176,7 +180,7 @@ async function searchMelon(artist: string, title: string): Promise<any | null> {
     
     const lyrics = extractTextFromHTML(lyricsMatch[1]);
     
-    if (lyrics && lyrics.length > 100) {
+    if (lyrics && lyrics.length > 60) {
       timer.success(`Found ${lyrics.length} chars`);
       return {
         lyrics,
@@ -209,7 +213,9 @@ async function searchGenie(artist: string, title: string): Promise<any | null> {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'ko-KR,ko;q=0.9'
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+        'Referer': 'https://www.genie.co.kr/',
+        'Cache-Control': 'no-cache'
       }
     });
     
@@ -220,14 +226,24 @@ async function searchGenie(artist: string, title: string): Promise<any | null> {
     
     const html = await response.text();
     
-    // Extract song ID
-    const songMatch = html.match(/songInfo\((\d+)\)/);
-    if (!songMatch) {
+    // Extract song ID (try multiple patterns as Genie markup changes frequently)
+    let songId: string | null = null;
+    const songMatch1 = html.match(/songInfo\((\d+)\)/);
+    if (songMatch1) {
+      songId = songMatch1[1];
+    }
+    if (!songId) {
+      const songMatch2 = html.match(/detail\/songInfo\?xgnm=(\d+)/);
+      if (songMatch2) songId = songMatch2[1];
+    }
+    if (!songId) {
+      const songMatch3 = html.match(/data-song-id=["'](\d+)["']/i);
+      if (songMatch3) songId = songMatch3[1];
+    }
+    if (!songId) {
       timer.fail('No song found');
       return null;
     }
-    
-    const songId = songMatch[1];
     const lyricsUrl = `https://www.genie.co.kr/detail/songInfo?xgnm=${songId}`;
     
     // Fetch lyrics page
@@ -235,7 +251,9 @@ async function searchGenie(artist: string, title: string): Promise<any | null> {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'ko-KR,ko;q=0.9'
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+        'Referer': searchUrl,
+        'Cache-Control': 'no-cache'
       }
     });
     
@@ -257,7 +275,7 @@ async function searchGenie(artist: string, title: string): Promise<any | null> {
     
     const lyrics = extractTextFromHTML(lyricsMatch[1]);
     
-    if (lyrics && lyrics.length > 100) {
+    if (lyrics && lyrics.length > 60) {
       timer.success(`Found ${lyrics.length} chars`);
       return {
         lyrics,
