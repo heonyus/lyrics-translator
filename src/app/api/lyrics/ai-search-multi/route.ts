@@ -544,12 +544,10 @@ async function checkCache(artist: string, title: string) {
     
     if (data && new Date(data.expires_at) > new Date()) {
       // 히트 카운트 비동기 업데이트 (응답 지연 방지)
-      supabase
+      void supabase
         .from('ai_lyrics_cache')
         .update({ hit_count: (data.hit_count || 0) + 1 })
-        .eq('id', data.id)
-        .then(() => {})
-        .catch(() => {});
+        .eq('id', data.id);
       
       const cacheData = {
         lyrics: data.lyrics,
