@@ -1,4 +1,5 @@
 import { APITimer, logger } from '@/lib/logger';
+import { resolveCanonicalPPLX, buildGenericTitleVariants } from '@/lib/canonicalize';
 
 // Extract text from HTML preserving line breaks
 export function extractTextFromHTML(html: string): string {
@@ -27,38 +28,19 @@ export function extractTextFromHTML(html: string): string {
     .join('\n');
 }
 
-// Generate Korean search query variants (romanization, spacing, o'clock normalization)
-function generateKoVariants(artist: string, title: string): Array<{ a: string; t: string }> {
+// Generate Korean search query variants using generic rules + LLM canonicalization (no hardcoding of titles)
+async function generateKoVariants(artist: string, title: string): Promise<Array<{ a: string; t: string }>> {
   const A = String(artist || '').trim();
   const T = String(title || '').trim();
   const artists = new Set<string>([A]);
-  const titles = new Set<string>([T]);
+  const titles = new Set<string>([T, ...buildGenericTitleVariants(T)]);
 
-  // Artist romanization
-  if (/도리/i.test(A)) {
-    artists.add('dori');
-    artists.add('DORI');
-    artists.add('Dori');
-  }
-
-  // Title normalization: "2오클락" → "2 o'clock", "2 oclock"
-  const ocRegex = /(\d+)\s*오\s*클락/iu;
-  const ocRegex2 = /(\d+)\s*오클락/iu;
-  const addOclock = (s: string) => {
-    const m = s.match(/(\d+)/);
-    if (m) {
-      const n = m[1];
-      titles.add(`${n} o'clock`);
-      titles.add(`${n} O'Clock`);
-      titles.add(`${n} oclock`);
-      titles.add(`${n} Oclock`);
-    }
-  };
-  if (ocRegex.test(T)) addOclock(T);
-  if (ocRegex2.test(T)) addOclock(T);
-  // Spacing variants
-  titles.add(T.replace(/\s+/g, ' ').trim());
-  titles.add(T.replace(/\s*/g, ''));
+  // LLM canonicalization (artist/title) to avoid site-specific hardcoding
+  try {
+    const canonical = await resolveCanonicalPPLX(A, T);
+    if (canonical?.artist) artists.add(canonical.artist);
+    if (canonical?.title) buildGenericTitleVariants(canonical.title).forEach(v => titles.add(v));
+  } catch {}
 
   const pairs: Array<{ a: string; t: string }> = [];
   for (const a of artists) {
@@ -264,7 +246,7 @@ export async function searchKoreanSites({ artist, title }: { artist: string; tit
   const timer = new APITimer('Korean Sites');
   logger.info(`🇰🇷 Searching Korean sites for: ${artist} - ${title}`);
   try {
-    const variants = generateKoVariants(artist, title);
+    const variants = await generateKoVariants(artist, title);
     for (const v of variants) {
       const searches = [
         searchBugs(v.a, v.t),

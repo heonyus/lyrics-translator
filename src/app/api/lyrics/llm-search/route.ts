@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
+import { resolveCanonicalPPLX } from '@/lib/canonicalize';
 import { scoreLyrics, normalizeLyrics, detectDominantLang } from '../quality';
 import { extractTextFromHTML, searchKoreanSites } from '../korean-scrapers/utils';
 
@@ -900,9 +901,9 @@ export async function POST(request: NextRequest) {
     const norm = normalizeAliases(String(artist || ''), String(title || ''));
     artist = norm.na;
     title = norm.nt;
-    // Canonical resolver (non-hardcoded) for fuzzy inputs like '호시노겐 푸딩' → '星野源 - くだらないの中に' (example)
+    // Canonical resolver (non-hardcoded) via Perplexity
     try {
-      const canonical = await resolveCanonical(artist, title);
+      const canonical = await resolveCanonicalPPLX(artist, title);
       if (canonical?.artist && canonical?.title) {
         artist = canonical.artist;
         title = canonical.title;
