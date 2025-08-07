@@ -80,10 +80,13 @@ export async function POST(request: NextRequest) {
     };
     
     const targetLang = languageMap[targetLanguage] || targetLanguage;
+    const isPronounce = String(task || '').toLowerCase() === 'pronounce';
+    const hasGroq = !!GROQ_API_KEY;
+    const hasGoogle = !!GOOGLE_API_KEY;
     
-    // Try Groq first
+    // Try Groq first (if available and not pronounce task)
     try {
-      const isPronounce = String(task || '').toLowerCase() === 'pronounce';
+      if (!hasGroq || isPronounce) throw new Error('Skip Groq');
       logger.api('Groq Translate', 'start', `${isPronounce ? 'Pronounce' : 'Translate'} Target=${targetLang} Lines=${lines.length}`);
       await acquireGroqSlot();
       let data: any = null;
@@ -175,11 +178,11 @@ export async function POST(request: NextRequest) {
       
       // Fallback to Gemini 2.5 Flash
       try {
-        if (!GOOGLE_API_KEY) {
+        if (!hasGoogle) {
           throw new Error('No Google API key available');
         }
         
-        const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+        const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY as string);
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         // Try batch translation first
@@ -263,6 +266,34 @@ Translate the lyrics to ${targetLang}.\nRules:\n- Keep the same number of lines.
         
       } catch (geminiError) {
         logger.api('Gemini Translate (Batch)', 'fail', 'Fallback failed');
+        
+        // Fallback to Google Translate v2 (bulk) if available and not pronounce
+        if (!isPronounce && hasGoogle) {
+          try {
+            const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_API_KEY}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ q: lines, target: targetLanguage, format: 'text' })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const out = (data?.data?.translations || []).map((t: any) => (t.translatedText || '').trim());
+              logger.api('Google Translate v2', 'success', `Lines=${out.length}`);
+              logger.summary(1, 1, Date.now() - overallStart);
+              return NextResponse.json({
+                success: true,
+                translations: out.length ? out : lines,
+                sourceLanguage: 'auto',
+                targetLanguage,
+                source: 'Google Translate v2 (Backup)',
+                model: 'google-v2',
+                task: 'translate'
+              });
+            }
+          } catch (gerr) {
+            logger.api('Google Translate v2', 'fail', 'Backup failed');
+          }
+        }
         
         // Last fallback: simple translation
         const simpleTranslations = lines.map(line => {
