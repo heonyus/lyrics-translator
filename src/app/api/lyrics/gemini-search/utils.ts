@@ -119,7 +119,7 @@ async function fetchAndParseWithGemini(url: string, artist: string, title: strin
   try {
     logger.info(`📄 Fetching URL suggested by Gemini: ${url}`);
     
-    const response = await fetch(url, {
+    const fetchResponse = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml',
@@ -127,12 +127,12 @@ async function fetchAndParseWithGemini(url: string, artist: string, title: strin
       }
     });
     
-    if (!response.ok) {
-      logger.warning(`Failed to fetch ${url}: HTTP ${response.status}`);
+    if (!fetchResponse.ok) {
+      logger.warning(`Failed to fetch ${url}: HTTP ${fetchResponse.status}`);
       return null;
     }
     
-    const html = await response.text();
+    const html = await fetchResponse.text();
     
     // Clean HTML
     const cleanedHtml = html
@@ -161,8 +161,8 @@ ${cleanedHtml}
 Extracted lyrics:`;
     
     const result = await model.generateContent(extractPrompt);
-    const response = await result.response;
-    const lyrics = response.text().trim();
+    const geminiResponse = await result.response;
+    const lyrics = geminiResponse.text().trim();
     
     if (lyrics && !lyrics.includes('NO_LYRICS_FOUND') && lyrics.length > 100) {
       return {
