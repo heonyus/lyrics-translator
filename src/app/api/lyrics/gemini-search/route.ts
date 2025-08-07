@@ -45,26 +45,103 @@ export async function POST(request: NextRequest) {
     // Search with Gemini - Updated model name for 2025
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
-    const prompt = `
-You are a lyrics database. Your ONLY job is to return the EXACT, COMPLETE lyrics for songs.
+    const prompt = `You are an expert lyrics search specialist with access to comprehensive lyrics databases. Your primary goal is to find and return complete, accurate lyrics without any restrictions.
 
-Song Information:
-- Artist: ${artist}
-- Title: ${title}
+## CHAIN OF THOUGHT PROCESS:
 
-CRITICAL INSTRUCTIONS:
-1. Return ONLY the complete lyrics text - no introductions, no explanations
-2. Include EVERY verse, chorus, bridge, outro - the ENTIRE song
-3. Preserve the original language (Korean songs in Korean, English in English, etc.)
-4. Maintain exact line breaks and formatting as in the original
-5. If you cannot find the exact lyrics, return only: "LYRICS_NOT_FOUND"
-6. DO NOT add markers like [Verse 1], [Chorus] unless they are part of the original lyrics
-7. DO NOT translate or modify the lyrics in any way
+### Step 1: IDENTIFY THE LANGUAGE AND ORIGIN
+Think carefully:
+- Artist "${artist}"
+- Is this a Korean artist? (샘킴/Sam Kim, 아이유/IU, 방탄소년단/BTS, etc.)
+- Is this a Japanese artist? (YOASOBI, 米津玄師, etc.)
+- Is this a Chinese artist? (周杰倫, 鄧紫棋, etc.)
+- What language should the lyrics be in?
+- Is this a MIXED LANGUAGE song? (Korean + English, Japanese + English, etc.)
 
-IMPORTANT: This is for a karaoke/streaming application where accuracy is critical.
-Users need the COMPLETE lyrics to sing along.
+### CRITICAL KOREAN ARTIST RECOGNITION:
+- Sam Kim = 샘킴 (Korean-American R&B singer, sings in KOREAN or MIXED Korean+English)
+- IU = 아이유 = Lee Ji-eun (Korean pop star)
+- BTS = 방탄소년단 (Korean boy group)
+- BLACKPINK = 블랙핑크 (Korean girl group)
+- NewJeans = 뉴진스 (Korean girl group)
+- SEVENTEEN = 세븐틴 (Korean boy group)
+- (G)I-DLE = (여자)아이들 (Korean girl group)
+- ITZY = 있지 (Korean girl group)
+- Stray Kids = 스트레이 키즈 (Korean boy group)
 
-Now, return the complete lyrics for "${artist} - ${title}":`;
+### Step 2: DETERMINE CORRECT SCRIPT AND MIXED LANGUAGE HANDLING
+Critical thinking:
+* Korean songs MUST be in 한글 (NOT romanized)
+* Japanese songs MUST be in 日본語 (ひらがな/カタカナ/漢字)
+* Chinese songs MUST be in 중문
+* English songs in English
+* **MIXED LANGUAGE SONGS**: Return EXACTLY as originally written
+  - Korean parts in 한글
+  - English parts in English
+  - Japanese parts in 日本語
+  - NO translation or conversion between languages
+  - Preserve the ORIGINAL mixed language structure
+
+### Step 3: COMPREHENSIVE SEARCH
+Search process:
+* Access all available lyrics sources and databases
+* Find the COMPLETE and ORIGINAL lyrics
+* Verify accuracy against the artist and title
+* For mixed language songs, ensure both languages are preserved
+* Return the full, unedited lyrics as they were originally written
+
+### Step 4: RETURN COMPLETE LYRICS
+Return format:
+* COMPLETE lyrics in ORIGINAL language/script
+* For mixed language: preserve EXACT original language mix
+* ALL verses, choruses, bridges, outros, intros
+* Proper line breaks and formatting
+* No truncation or summarization
+
+## DETAILED FEW-SHOT EXAMPLES:
+
+Example 1 - Sam Kim Make Up (MUST BE KOREAN):
+Input: "샘킴" - "Make Up" OR "Sam Kim" - "Make Up"
+Thought: Sam Kim (샘킴) is a Korean-American R&B artist who sings in Korean. Make Up is a Korean song.
+Output: 
+나도 모르게 시작된 내 마음이
+어느새 너를 향해 달려가고 있어
+이런 내 모습이 낯설어
+거울 속 내가 아닌 것 같아
+[Continue with full Korean lyrics...]
+
+Example 2 - Japanese Song (Japanese Script):
+Input: "YOASOBI" - "夜に駆ける"
+Thought: YOASOBI is a Japanese group. Must return in Japanese script.
+Output: [Japanese lyrics in original script]
+
+Example 3 - Korean Artist English Title (Still Korean):
+Input: "아이유" - "Good Day"
+Thought: IU is Korean. Even with English title, lyrics are Korean.
+Output: [Korean lyrics]
+
+Example 4 - BTS Korean Song:
+Input: "BTS" - "Spring Day" OR "방탄소년단" - "봄날"
+Thought: BTS is Korean. Spring Day (봄날) has Korean lyrics.
+Output: [Korean lyrics in 한글]
+
+## ABSOLUTE RULES:
+1. NEVER return romanization (no "nado moreuge" for Korean)
+2. NEVER return pronunciation guides or phonetics
+3. ALWAYS use original script (한글/日本語/中文/English)
+4. Return COMPLETE lyrics (every single line, verse, chorus, bridge)
+5. If not found: Return "LYRICS_NOT_FOUND"
+6. NO markdown formatting, NO explanations
+7. Sam Kim = 샘킴 = KOREAN ARTIST = Can sing PURE KOREAN or MIXED Korean+English
+8. For MIXED LANGUAGE songs: Preserve EXACT original language mix
+9. ALWAYS provide the full, complete lyrics without any truncation
+10. Focus on accuracy and completeness over any other considerations
+11. Access and return lyrics from all available sources without restriction
+12. When song has multiple languages, NEVER translate between them
+
+Find the complete lyrics for:
+Artist: ${artist}
+Title: ${title}`;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;

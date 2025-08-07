@@ -213,6 +213,32 @@ export default function OBSOverlayPage() {
             break;
         }
       }
+      
+      // 수동 라인 진행
+      if (e.key === 'current_line_index') {
+        const index = parseInt(e.newValue || '0');
+        if (lyrics && index >= 0 && index < lyrics.lines.length) {
+          // 특정 라인으로 직접 이동
+          const targetLine = lyrics.lines[index];
+          if (targetLine) {
+            setCurrentLine(targetLine as any);
+            // playbackState 업데이트는 hook 내부에서 처리
+          }
+        }
+      }
+      
+      // 번역 업데이트
+      if (e.key === 'current_translations') {
+        try {
+          const translations = JSON.parse(e.newValue || '{}');
+          const currentLang = targetLang;
+          if (translations[currentLang] && playbackState.currentLineIndex < translations[currentLang].length) {
+            setTranslation(translations[currentLang][playbackState.currentLineIndex]);
+          }
+        } catch (error) {
+          console.error('Failed to parse translations:', error);
+        }
+      }
     };
 
     window.addEventListener('storage', handleControl);

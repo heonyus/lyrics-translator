@@ -1,764 +1,1116 @@
-'use client';
+"use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { Search, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Settings, Music, Globe, Clock, Star, Moon, Sun, Edit2, Send, Loader2, Mic, RefreshCw, Copy, ExternalLink } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
-import { SearchIcon, PlayIcon, PauseIcon, ResetIcon, MoonIcon, SunIcon, MusicIcon, MicIcon, NextIcon, LoaderIcon } from '@/components/Icons';
+import LanguageSelector from '@/components/LanguageSelector';
+import { DEFAULT_SEARCH_PROMPT } from '@/lib/constants/defaultPrompt';
+import EnhancedSearchBar from '@/components/EnhancedSearchBar';
+import SimpleLyricsEditor from '@/components/SimpleLyricsEditor';
 
-// 기본 인기 검색어 (API 로딩 전 표시)
-const defaultPopularSearches = [
-  '아이유 좋은날',
-  'NewJeans Ditto',
-  'YOASOBI 夜に駆ける',
-  '임영웅 사랑은 늘 도망가',
-  'BTS Dynamite'
-];
-
-// 검색 결과 타입
-interface PronunciationResult {
-  pronunciation: string;
-  detectedLanguage: string;
-  cached: boolean;
+interface Song {
+  id: string;
+  artist: string;
+  title: string;
+  lyrics: string;
+  metadata?: any;
 }
 
-export default function Home() {
-  // 다크모드
-  const [isDark, setIsDark] = useState(false);
+interface Translation {
+  [language: string]: string[];
+}
+
+// 검색 제안 데이터
+const searchSuggestions = [
+  '아이유 좋은날',
+  '아이유 블루밍',
+  '아이유 밤편지',
+  '아이유 Lilac',
+  'NewJeans Ditto',
+  'NewJeans Hype Boy',
+  'NewJeans OMG',
+  '임영웅 사랑은 늘 도망가',
+  '임영웅 이제 나만 믿어요',
+  'YOASOBI 夜に駆ける',
+  'YOASOBI 祝福',
+  'BTS Dynamite',
+  'BTS Butter',
+  'BTS Spring Day',
+  'IVE Love Dive',
+  'IVE After Like',
+  'Seventeen God of Music',
+  'NCT Dream Candy',
+];
+
+export default function HomePage() {
+  // Dark mode
+  const [isDarkMode, setIsDarkMode] = useState(false);
   
-  // 검색 상태
+  // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [popularSearches, setPopularSearches] = useState<string[]>(defaultPopularSearches);
+  const searchRef = useRef<HTMLDivElement>(null);
   
-  // 가사 상태
-  const [lyrics, setLyrics] = useState('');
-  const [pronunciation, setPronunciation] = useState('');
-  const [showPronunciation, setShowPronunciation] = useState(false);
-  const [detectedLanguage, setDetectedLanguage] = useState('');
+  // Prompt customization
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState(DEFAULT_SEARCH_PROMPT);
   
-  // 재생 상태
-  const [isPlaying, setIsPlaying] = useState(false);
+  // Selected song state
+  const [selectedSong, setSelectedSong] = useState<Song | null>(null);
+  const [lyricsLines, setLyricsLines] = useState<string[]>([]);
+  const [editedLyrics, setEditedLyrics] = useState<string>('');
+  const [showEnhancedSearch, setShowEnhancedSearch] = useState(false);
+  const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+  
+  // Translation state
+  const [translations, setTranslations] = useState<Translation>({});
+  const [targetLanguages, setTargetLanguages] = useState<string[]>([]);
+  const [showOriginalLyrics, setShowOriginalLyrics] = useState(true);
+  const [isTranslating, setIsTranslating] = useState(false);
+  
+  // Playback state
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   
-  // 설정 패널
-  const [activeTab, setActiveTab] = useState<'preview' | 'settings' | 'shortcuts'>('preview');
+  // MR/YouTube state
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  
+  // Timing recording state
+  const [isRecordingTimings, setIsRecordingTimings] = useState(false);
+  const [timingData, setTimingData] = useState<Array<{line_index: number; clicked_at: number}>>([]);
+  const [sessionStartTime, setSessionStartTime] = useState(0);
+  
+  // Settings state
   const [fontSize, setFontSize] = useState(60);
   const [textColor, setTextColor] = useState('#FFFFFF');
   const [highlightColor, setHighlightColor] = useState('#FFD700');
-  const [chromaColor, setChromaColor] = useState('#00FF00');
+  const [chromaKey, setChromaKey] = useState('#00FF00');
   
-  // OBS URL
-  const [obsUrl, setObsUrl] = useState('');
-  
-  // 자동 검색 API
-  const searchAPIs = ['perplexity', 'gemini', 'claude', 'gpt'] as const;
-  
-  // 다크모드 초기화
+  // Playlist
+  const [favorites, setFavorites] = useState<Song[]>([]);
+
+  // Load preferences on mount
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    
-    if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
-      setIsDark(true);
-      document.documentElement.classList.add('dark');
+    // Load dark mode preference
+    const savedDarkMode = localStorage.getItem('darkMode');
+    if (savedDarkMode === 'true') {
+      setIsDarkMode(true);
     }
-  }, []);
-  
-  // 최근 검색 및 인기 검색어 불러오기
-  useEffect(() => {
+    
+    // Load recent searches
     const saved = localStorage.getItem('recentSearches');
     if (saved) {
       setRecentSearches(JSON.parse(saved));
     }
     
-    // 인기 검색어 API 호출
-    fetch('/api/popular-searches')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.popularSearches) {
-          setPopularSearches(data.popularSearches.slice(0, 5));
-        }
-      })
-      .catch(console.error);
+    // Load favorites
+    const savedFavorites = localStorage.getItem('favorites');
+    if (savedFavorites) {
+      setFavorites(JSON.parse(savedFavorites));
+    }
+    
+    // Load saved prompt
+    const savedPrompt = localStorage.getItem('customPrompt');
+    if (savedPrompt) {
+      setCustomPrompt(savedPrompt);
+    }
   }, []);
-  
-  // 다크모드 토글
+
+  // Toggle dark mode
   const toggleDarkMode = () => {
-    const newDark = !isDark;
-    setIsDark(newDark);
-    
-    if (newDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+    const newMode = !isDarkMode;
+    setIsDarkMode(newMode);
+    localStorage.setItem('darkMode', newMode.toString());
+  };
+
+  // Handle search input change - show suggestions
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      const filtered = searchSuggestions.filter(suggestion =>
+        suggestion.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredSuggestions(filtered.slice(0, 5));
+      setShowSuggestions(true);
     } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      setFilteredSuggestions([]);
+      setShowSuggestions(false);
     }
-  };
-  
-  // 스마트 파싱 (아티스트와 제목 분리)
-  const parseSearchQuery = (query: string): { artist: string, title: string } => {
-    // 패턴 매칭
-    const patterns = [
-      /^(.+?)\s*-\s*(.+)$/,     // "아티스트 - 제목"
-      /^(.+?)의\s+(.+)$/,        // "아티스트의 제목"
-      /^(.+?)\s+(.+)$/,          // "아티스트 제목"
-    ];
-    
-    for (const pattern of patterns) {
-      const match = query.match(pattern);
-      if (match) {
-        return { artist: match[1].trim(), title: match[2].trim() };
+  }, [searchQuery]);
+
+  // Click outside to close suggestions
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
       }
-    }
-    
-    // 기본: 첫 단어를 아티스트로
-    const words = query.split(' ');
-    if (words.length >= 2) {
-      return {
-        artist: words[0],
-        title: words.slice(1).join(' ')
-      };
-    }
-    
-    return { artist: query, title: '' };
-  };
-  
-  // 검색 실행
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Search function
+  const handleSearch = async (query?: string, useCustom: boolean = true) => {
+    const searchTerm = query || searchQuery;
+    if (!searchTerm.trim()) {
       toast.error('검색어를 입력하세요');
       return;
     }
     
-    // 파싱
-    const { artist, title } = parseSearchQuery(searchQuery);
-    
-    if (!title) {
-      toast.error('아티스트와 제목을 함께 입력하세요 (예: 아이유 좋은날)');
-      return;
-    }
-    
-    // 최근 검색에 추가
-    const newRecent = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
+    // Add to recent searches
+    const newRecent = [searchTerm, ...recentSearches.filter(s => s !== searchTerm)].slice(0, 5);
     setRecentSearches(newRecent);
     localStorage.setItem('recentSearches', JSON.stringify(newRecent));
     
-    // 인기 검색어 업데이트 (DB에 기록)
-    fetch('/api/popular-searches', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ artist, title })
-    }).catch(console.error);
-    
-    setIsSearching(true);
-    setCurrentStep(0);
-    setLyrics('');
-    setPronunciation('');
     setShowSuggestions(false);
+    setIsSearching(true);
     
-    // 순차적 검색
-    for (let i = 0; i < searchAPIs.length; i++) {
-      setCurrentStep(i + 1);
-      const api = searchAPIs[i];
-      
-      try {
-        let response;
-        
-        switch (api) {
-          case 'perplexity':
-            response = await fetch('/api/lyrics/ai-search-multi', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ artist, title })
-            });
-            break;
-            
-          case 'gemini':
-            response = await fetch('/api/lyrics/gemini-search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ artist, title })
-            });
-            break;
-            
-          case 'claude':
-            response = await fetch('/api/lyrics/claude-search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ artist, title })
-            });
-            break;
-            
-          case 'gpt':
-            response = await fetch('/api/lyrics/gpt-search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ artist, title })
-            });
-            break;
-        }
-        
-        if (response && response.ok) {
-          const data = await response.json();
-          
-          if (data.success && data.lyrics) {
-            setLyrics(data.lyrics);
-            toast.success(`가사를 찾았습니다!`);
-            
-            // 자동 발음 변환
-            await handlePronunciation(data.lyrics);
-            
-            // localStorage 저장
-            localStorage.setItem('current_lyrics', data.lyrics);
-            localStorage.setItem('current_artist', artist);
-            localStorage.setItem('current_title', title);
-            
-            // OBS URL 생성
-            generateObsUrl();
-            
-            break;
-          }
-        }
-      } catch (error) {
-        console.error(`${api} search error:`, error);
-      }
-    }
-    
-    setIsSearching(false);
-    
-    if (!lyrics) {
-      toast.error('가사를 찾을 수 없습니다');
-    }
-  };
-  
-  // 발음 변환
-  const handlePronunciation = async (text: string) => {
     try {
-      const response = await fetch('/api/pronunciation', {
+      const response = await fetch('/api/lyrics/multi-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, targetLang: 'ko' })
+        body: JSON.stringify({ 
+          query: searchTerm,
+          prompt: useCustom ? customPrompt : undefined
+        })
       });
       
-      if (response.ok) {
-        const data: PronunciationResult = await response.json();
-        setPronunciation(data.pronunciation);
-        setDetectedLanguage(data.detectedLanguage);
-        localStorage.setItem('lyrics_pronunciation', data.pronunciation);
+      const data = await response.json();
+      if (data.success && data.results && data.results.length > 0) {
+        const result = data.bestResult || data.results[0];
+        const song: Song = {
+          id: Date.now().toString(),
+          artist: result.artist,
+          title: result.title,
+          lyrics: result.lyrics,
+          metadata: result.metadata
+        };
         
-        if (data.detectedLanguage !== 'ko' && data.detectedLanguage !== 'unknown') {
-          toast.success('발음 변환 완료');
-          setShowPronunciation(true);
+        setSelectedSong(song);
+        setEditedLyrics(song.lyrics);
+        setLyricsLines(song.lyrics.split('\n').filter(line => line.trim()));
+        if (data.fromCache) {
+          toast.success('📚 DB에서 가사를 찾았습니다!');
+        } else {
+          toast.success(`🎵 ${result.source}에서 가사를 찾았습니다!`);
         }
+      } else {
+        toast.error('가사를 찾을 수 없습니다');
       }
     } catch (error) {
-      console.error('Pronunciation error:', error);
+      console.error('Search error:', error);
+      toast.error('검색 중 오류가 발생했습니다');
+    } finally {
+      setIsSearching(false);
     }
   };
-  
-  // OBS URL 생성
-  const generateObsUrl = () => {
-    const params = new URLSearchParams({
-      chromaKey: chromaColor,
-      fontSize: fontSize.toString(),
-      textColor,
-      highlightColor,
-      showTranslation: 'false'
-    });
-    
-    const url = `${window.location.origin}/obs?${params}`;
-    setObsUrl(url);
+
+  // Re-search current song
+  const reSearch = () => {
+    if (selectedSong) {
+      const query = `${selectedSong.artist} ${selectedSong.title}`;
+      setSearchQuery(query);
+      handleSearch(query, true);
+    }
   };
-  
-  // 재생 제어
-  const handlePlayPause = () => {
-    const newState = !isPlaying;
-    setIsPlaying(newState);
-    localStorage.setItem('obs_control', newState ? 'play' : 'pause');
-  };
-  
-  const handleReset = () => {
-    setCurrentLineIndex(0);
-    setIsPlaying(false);
-    localStorage.setItem('obs_control', 'reset');
-    localStorage.setItem('current_line_index', '0');
-  };
-  
-  // 키보드 단축키
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+
+  // Manual line progression
+  const goToLine = (index: number) => {
+    if (index >= 0 && index < lyricsLines.length) {
+      setCurrentLineIndex(index);
+      localStorage.setItem('current_line_index', index.toString());
       
-      if (e.code === 'Space') {
-        e.preventDefault();
-        handlePlayPause();
-      } else if (e.key === 'r' || e.key === 'R') {
-        handleReset();
+      if (isRecordingTimings) {
+        const currentTime = (Date.now() - sessionStartTime) / 1000;
+        setTimingData(prev => [...prev, {
+          line_index: index,
+          clicked_at: currentTime
+        }]);
+      }
+    }
+  };
+
+  const nextLine = () => goToLine(currentLineIndex + 1);
+  const prevLine = () => goToLine(currentLineIndex - 1);
+  const resetPlayback = () => {
+    goToLine(0);
+    setIsPlaying(false);
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyboard = (e: KeyboardEvent) => {
+      if (!selectedSong) return;
+      
+      // Don't trigger shortcuts when typing in input fields
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
+      switch(e.key) {
+        case ' ':
+          e.preventDefault();
+          if (e.shiftKey) {
+            prevLine();
+          } else {
+            nextLine();
+          }
+          break;
+        case 'ArrowRight':
+          nextLine();
+          break;
+        case 'ArrowLeft':
+          prevLine();
+          break;
+        case 'r':
+        case 'R':
+          resetPlayback();
+          break;
       }
     };
     
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isPlaying]);
-  
-  // 크로마키 프리뷰
-  const renderChromaPreview = () => {
-    const lines = (showPronunciation ? pronunciation : lyrics).split('\n').filter(l => l.trim());
-    const currentLine = lines[currentLineIndex] || '';
-    const nextLine = lines[currentLineIndex + 1] || '';
+    window.addEventListener('keydown', handleKeyboard);
+    return () => window.removeEventListener('keydown', handleKeyboard);
+  }, [currentLineIndex, lyricsLines, selectedSong]);
+
+  // Translate lyrics
+  const translateLyrics = async () => {
+    if (!selectedSong || targetLanguages.length === 0) return;
     
-    return (
-      <div 
-        className="w-full h-64 rounded-2xl overflow-hidden relative shadow-2xl"
-        style={{ backgroundColor: chromaColor }}
-      >
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-8">
-          <div 
-            className="text-center font-bold mb-4 animate-fade-in"
-            style={{ 
-              fontSize: fontSize * 0.4,
-              color: textColor,
-              textShadow: '3px 3px 6px rgba(0,0,0,0.9)'
-            }}
-          >
-            {currentLine}
-          </div>
-          <div 
-            className="text-center opacity-70"
-            style={{ 
-              fontSize: fontSize * 0.3,
-              color: textColor,
-              textShadow: '2px 2px 4px rgba(0,0,0,0.9)'
-            }}
-          >
-            {nextLine}
-          </div>
-        </div>
-      </div>
-    );
-  };
-  
-  return (
-    <div className={`min-h-screen ${
-      isDark 
-        ? 'bg-gray-900' 
-        : 'bg-gray-50'
-    }`}>
-      <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} />
+    setIsTranslating(true);
+    const newTranslations: Translation = {};
+    
+    try {
+      // Translate to all selected languages
+      for (const lang of targetLanguages) {
+        const response = await fetch('/api/translate/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lines: lyricsLines,
+            targetLanguage: lang,
+            context: {
+              artist: selectedSong.artist,
+              title: selectedSong.title
+            }
+          })
+        });
+        
+        const data = await response.json();
+        if (data.translations) {
+          newTranslations[lang] = data.translations;
+        }
+      }
       
-      {/* 헤더 */}
-      <header className={`border-b ${
-        isDark 
-          ? 'bg-gray-800 border-gray-700' 
-          : 'bg-white border-gray-200 shadow-sm'
-      }`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className={isDark ? 'text-purple-400' : 'text-purple-600'}>
-                <MusicIcon />
-              </div>
-              <h1 className={`text-xl font-semibold ${
-                isDark ? 'text-white' : 'text-gray-900'
-              }`}>
-                Karaoke Live
-                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
-                  isDark
-                    ? 'bg-purple-900 text-purple-300'
-                    : 'bg-purple-100 text-purple-700'
-                }`}>
-                  Pro
-                </span>
-              </h1>
+      setTranslations(newTranslations);
+      localStorage.setItem('current_translations', JSON.stringify(newTranslations));
+      toast.success(`${targetLanguages.length}개 언어로 번역 완료!`);
+    } catch (error) {
+      console.error('Translation error:', error);
+      toast.error('번역 중 오류가 발생했습니다');
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  // Send to OBS - Open combined window
+  const sendToOBS = () => {
+    if (!selectedSong) {
+      toast.error('먼저 가사를 검색하세요');
+      return;
+    }
+    
+    // Save data to localStorage
+    localStorage.setItem('current_lrc', editedLyrics);
+    localStorage.setItem('current_title', selectedSong.title);
+    localStorage.setItem('current_artist', selectedSong.artist);
+    localStorage.setItem('current_line_index', '0');
+    localStorage.setItem('current_translations', JSON.stringify(translations));
+    localStorage.setItem('selected_languages', JSON.stringify(targetLanguages));
+    
+    // Generate URL with settings
+    const params = new URLSearchParams({
+      fontSize: fontSize.toString(),
+      textColor: encodeURIComponent(textColor),
+      highlightColor: encodeURIComponent(highlightColor),
+      chromaKey: encodeURIComponent(chromaKey)
+    });
+    
+    // Open combined OBS window
+    const obsWindow = window.open(
+      `/obs/combined?${params.toString()}`,
+      'OBSWindow',
+      'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
+    );
+    
+    if (obsWindow) {
+      toast.success('OBS 창이 열렸습니다!');
+    } else {
+      toast.error('팝업이 차단되었습니다. 팝업을 허용해주세요.');
+    }
+    
+    if (isRecordingTimings) {
+      setSessionStartTime(Date.now());
+      setTimingData([]);
+    }
+  };
+
+  // Copy lyrics
+  const copyLyrics = () => {
+    if (editedLyrics) {
+      navigator.clipboard.writeText(editedLyrics);
+      toast.success('가사가 복사되었습니다');
+    }
+  };
+
+  // Add to favorites
+  const toggleFavorite = () => {
+    if (!selectedSong) return;
+    
+    const exists = favorites.some(f => f.artist === selectedSong.artist && f.title === selectedSong.title);
+    let newFavorites;
+    
+    if (exists) {
+      newFavorites = favorites.filter(f => !(f.artist === selectedSong.artist && f.title === selectedSong.title));
+      toast.success('즐겨찾기에서 제거되었습니다');
+    } else {
+      newFavorites = [...favorites, selectedSong];
+      toast.success('즐겨찾기에 추가되었습니다');
+    }
+    
+    setFavorites(newFavorites);
+    localStorage.setItem('favorites', JSON.stringify(newFavorites));
+  };
+
+  const isFavorite = selectedSong && favorites.some(f => f.artist === selectedSong.artist && f.title === selectedSong.title);
+
+  return (
+    <div className={`min-h-screen transition-colors ${
+      isDarkMode 
+        ? 'bg-gradient-to-br from-gray-900 to-gray-800' 
+        : 'bg-gradient-to-br from-slate-50 to-slate-100'
+    }`}>
+      <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
+      
+      {/* Header */}
+      <div className={`${
+        isDarkMode 
+          ? 'bg-gray-800/50 border-gray-700' 
+          : 'bg-white border-slate-200'
+      } backdrop-blur-sm border-b px-6 py-4 shadow-sm sticky top-0 z-40`}>
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <h1 className={`text-2xl font-bold flex items-center gap-2 ${
+            isDarkMode ? 'text-white' : 'text-slate-800'
+          }`}>
+            <Music className="w-6 h-6 text-blue-500" />
+            노래방
+          </h1>
+          
+          {/* Current Song Info in Header */}
+          {selectedSong && (
+            <div className="flex-1 mx-8 text-center">
+              <p className={`font-medium ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                {selectedSong.title} - {selectedSong.artist}
+              </p>
             </div>
+          )}
+          
+          <div className="flex items-center gap-3">
             <button
               onClick={toggleDarkMode}
               className={`p-2 rounded-lg transition-colors ${
-                isDark 
-                  ? 'hover:bg-gray-700 text-yellow-400' 
-                  : 'hover:bg-gray-100 text-purple-600'
+                isDarkMode 
+                  ? 'bg-gray-700 hover:bg-gray-600 text-yellow-400' 
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
               }`}
             >
-              <div>
-                {isDark ? <SunIcon /> : <MoonIcon />}
-              </div>
+              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button
+              onClick={sendToOBS}
+              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-medium flex items-center gap-2 transition-colors"
+            >
+              <ExternalLink className="w-4 h-4" />
+              OBS 창 열기
             </button>
           </div>
         </div>
-      </header>
-      
-      {/* 메인 컨텐츠 */}
-      <main className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* iOS 26 리퀴드 글래스 검색창 */}
-        <div className={`relative backdrop-blur-2xl backdrop-saturate-200 rounded-3xl p-8 mb-8 overflow-hidden ${
-          isDark 
-            ? 'bg-gradient-to-br from-gray-800/30 via-gray-800/20 to-gray-900/30 border border-white/10 shadow-2xl shadow-black/30' 
-            : 'bg-gradient-to-br from-white/40 via-white/30 to-white/40 border border-white/30 shadow-2xl shadow-black/10'
-        }`}>
-          {/* 글래스 하이라이트 효과 */}
-          <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent pointer-events-none" />
-          <div className="absolute -top-20 -right-20 w-40 h-40 bg-gradient-to-br from-purple-400/20 to-pink-400/20 rounded-full blur-3xl" />
-          <div className="relative">
-            <div className="relative">
-              <div className={`absolute left-4 top-1/2 -translate-y-1/2 ${
-                isDark ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                <SearchIcon />
-              </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto p-6">
+        {/* Search Mode Toggle */}
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            onClick={() => setShowEnhancedSearch(!showEnhancedSearch)}
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+              showEnhancedSearch
+                ? 'bg-blue-500 text-white'
+                : isDarkMode ? 'bg-gray-700 text-gray-200' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            <Search className="w-4 h-4" />
+            {showEnhancedSearch ? '향상된 검색' : '기본 검색'}
+          </button>
+          
+          {selectedSong && (
+            <button
+              onClick={() => setShowLyricsEditor(!showLyricsEditor)}
+              className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+                showLyricsEditor
+                  ? 'bg-green-500 text-white'
+                  : isDarkMode ? 'bg-gray-700 text-gray-200' : 'bg-slate-100 text-slate-700'
+              }`}
+            >
+              <Edit2 className="w-4 h-4" />
+              가사 편집기
+            </button>
+          )}
+        </div>
+        
+        {/* Enhanced Search Bar or Regular Search Bar */}
+        {showEnhancedSearch ? (
+          <EnhancedSearchBar 
+            onSearchResult={handleSearchResult}
+            isDarkMode={isDarkMode}
+          />
+        ) : (
+          <div className={`${
+            isDarkMode 
+              ? 'bg-gray-800 border-gray-700' 
+              : 'bg-white border-slate-200'
+          } rounded-2xl shadow-sm border p-4 mb-6 relative`} ref={searchRef}>
+          <div className="flex gap-3">
+            <div className="flex-1 relative">
+              <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${
+                isDarkMode ? 'text-gray-400' : 'text-slate-400'
+              }`} />
+              <Music className={`absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 ${
+                isDarkMode ? 'text-gray-500' : 'text-slate-300'
+              }`} />
               <input
                 type="text"
-                placeholder="노래 검색하기... (예: 아이유 좋은날, YOASOBI 夜に駆ける)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setShowSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                className={`w-full pl-12 pr-32 py-4 text-lg rounded-2xl backdrop-blur-xl transition-all duration-300 ${
-                  isDark 
-                    ? 'bg-black/30 text-white border border-white/20 focus:border-purple-400 focus:bg-black/40' 
-                    : 'bg-white/50 text-gray-900 border border-black/10 focus:border-purple-500 focus:bg-white/70'
-                } focus:outline-none focus:ring-4 focus:ring-purple-500/20 placeholder:text-gray-500`}
+                onFocus={() => searchQuery && setShowSuggestions(true)}
+                placeholder="🎵 아티스트와 제목을 입력하세요"
+                className={`w-full pl-12 pr-12 py-3 rounded-xl ${
+                  isDarkMode 
+                    ? 'bg-gray-700 text-white placeholder-gray-400' 
+                    : 'bg-slate-50 text-slate-800 placeholder-slate-400'
+                } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               />
-              <button
-                onClick={handleSearch}
-                disabled={isSearching || !searchQuery.trim()}
-                className={`absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2.5 rounded-xl font-medium transition-all duration-300 group ${
-                  isSearching || !searchQuery.trim()
-                    ? 'bg-gray-400/50 backdrop-blur-xl cursor-not-allowed opacity-50'
-                    : isDark
-                      ? 'bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg hover:shadow-xl hover:scale-105 backdrop-blur-xl border border-white/20'
-                      : 'bg-gradient-to-r from-purple-600/80 to-pink-600/80 hover:from-purple-600 hover:to-pink-600 text-white shadow-lg hover:shadow-xl hover:scale-105 backdrop-blur-xl border border-white/30'
-                }`}
-              >
-                <div className="absolute inset-0 rounded-xl bg-gradient-to-tr from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="relative">
-                  {isSearching ? (
-                    <LoaderIcon className="w-5 h-5" />
-                  ) : (
-                    '검색'
-                  )}
-                </div>
-              </button>
             </div>
-            
-            {/* 검색 제안 드롭다운 */}
-            {showSuggestions && (
-              <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg z-50 ${
-                isDark 
-                  ? 'bg-gray-800 border border-gray-700 shadow-lg' 
-                  : 'bg-white border border-gray-200 shadow-lg'
-              }`}>
-                <div className="max-h-64 overflow-y-auto scrollbar-thin">
-                {recentSearches.length > 0 && (
-                  <div>
-                    <div className={`px-3 py-2 text-xs font-semibold ${
-                      isDark 
-                        ? 'text-gray-400 bg-gray-900 border-b border-gray-700' 
-                        : 'text-gray-600 bg-gray-50 border-b border-gray-200'
-                    }`}>
-                      최근 검색
-                    </div>
-                    {recentSearches.map((search, i) => (
-                      <button
-                        key={i}
-                        onClick={() => {
-                          setSearchQuery(search);
-                          handleSearch();
-                        }}
-                        className={`w-full px-3 py-2 text-left text-sm transition-colors ${
-                          isDark 
-                            ? 'hover:bg-gray-700 text-gray-300' 
-                            : 'hover:bg-gray-50 text-gray-700'
-                        }`}
-                      >
-                        {search}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div>
-                  <div className={`px-3 py-2 text-xs font-semibold ${
-                    isDark 
-                      ? 'text-gray-400 bg-gray-900 border-b border-gray-700' 
-                      : 'text-gray-600 bg-gray-50 border-b border-gray-200'
-                  }`}>
-                    인기 검색
-                  </div>
-                  {popularSearches.map((search, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setSearchQuery(search);
-                        handleSearch();
-                      }}
-                      className={`w-full px-3 py-2 text-left text-sm transition-colors ${
-                        isDark 
-                          ? 'hover:bg-gray-700 text-gray-300' 
-                          : 'hover:bg-gray-50 text-gray-700'
-                      }`}
-                    >
-                      {search}
-                    </button>
-                  ))}
-                </div>
-                </div>
-              </div>
-            )}
+            <button
+              onClick={() => handleSearch()}
+              disabled={isSearching}
+              className="px-6 py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-slate-300 text-white rounded-xl font-medium transition-colors flex items-center gap-2"
+            >
+              {isSearching ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  검색중
+                </>
+              ) : (
+                '검색'
+              )}
+            </button>
           </div>
           
-          {/* 검색 진행 상태 */}
-          {isSearching && (
-            <div className="mt-4">
-              <div className="flex items-center justify-center gap-2">
-                <LoaderIcon className="w-5 h-5 text-purple-500" />
-                <span className={isDark ? 'text-gray-300' : 'text-gray-700'}>
-                  검색 중... ({currentStep}/{searchAPIs.length})
-                </span>
+          {/* Search Suggestions Dropdown */}
+          {showSuggestions && filteredSuggestions.length > 0 && (
+            <div className={`absolute left-4 right-4 top-full mt-2 rounded-xl shadow-lg border ${
+              isDarkMode 
+                ? 'bg-gray-800 border-gray-700' 
+                : 'bg-white border-slate-200'
+            } overflow-hidden z-10`}>
+              {filteredSuggestions.map((suggestion, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setSearchQuery(suggestion);
+                    handleSearch(suggestion);
+                  }}
+                  className={`w-full px-4 py-3 text-left flex items-center gap-3 transition-colors ${
+                    isDarkMode 
+                      ? 'hover:bg-gray-700 text-gray-200' 
+                      : 'hover:bg-slate-50 text-slate-700'
+                  } ${idx !== 0 ? 'border-t ' + (isDarkMode ? 'border-gray-700' : 'border-slate-100') : ''}`}
+                >
+                  <Search className="w-4 h-4 text-gray-400" />
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* Prompt Customization Section */}
+        <div className={`${
+          isDarkMode 
+            ? 'bg-gray-800 border-gray-700' 
+            : 'bg-white border-slate-200'
+        } rounded-2xl shadow-sm border mb-6`}>
+          <button
+            onClick={() => setShowPromptEditor(!showPromptEditor)}
+            className={`w-full px-6 py-4 flex items-center justify-between ${
+              isDarkMode ? 'hover:bg-gray-700/50' : 'hover:bg-slate-50'
+            } transition-colors rounded-t-2xl`}
+          >
+            <span className={`font-medium ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+              🎯 검색 프롬프트 커스터마이징
+            </span>
+            {showPromptEditor ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </button>
+          
+          {showPromptEditor && (
+            <div className="p-6 border-t border-gray-200 dark:border-gray-700">
+              <textarea
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value)}
+                className={`w-full h-64 p-4 rounded-xl text-sm font-mono ${
+                  isDarkMode 
+                    ? 'bg-gray-700 text-gray-100' 
+                    : 'bg-slate-50 text-slate-800'
+                } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              />
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => setCustomPrompt(DEFAULT_SEARCH_PROMPT)}
+                  className={`px-4 py-2 rounded-lg ${
+                    isDarkMode 
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' 
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                  }`}
+                >
+                  기본값 복원
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.setItem('customPrompt', customPrompt);
+                    toast.success('프롬프트가 저장되었습니다');
+                  }}
+                  className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg"
+                >
+                  저장
+                </button>
+                {selectedSong && (
+                  <button
+                    onClick={reSearch}
+                    className="ml-auto px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    현재 곡 재검색
+                  </button>
+                )}
               </div>
             </div>
           )}
         </div>
-        
-        {/* 메인 컨텐츠 영역 */}
-        {lyrics && (
-          <div className={`rounded-xl overflow-hidden ${
-            isDark 
-              ? 'bg-gray-800 border border-gray-700' 
-              : 'bg-white border border-gray-200 shadow-sm'
-          }`}>
-            {/* 탭 헤더 */}
-            <div className={`flex border-b ${
-              isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-gray-50'
-            }`}>
-              <button
-                onClick={() => setActiveTab('preview')}
-                className={`flex-1 px-4 py-3 font-medium transition-colors ${
-                  activeTab === 'preview'
-                    ? 'text-purple-600 border-b-2 border-purple-600'
-                    : isDark
-                      ? 'text-gray-400 hover:text-gray-200'
-                      : 'text-gray-600 hover:text-gray-800'
-                }`}
-              >
-                미리보기
-              </button>
-              <button
-                onClick={() => setActiveTab('settings')}
-                className={`flex-1 px-4 py-3 font-medium transition-colors ${
-                  activeTab === 'settings'
-                    ? 'text-purple-600 border-b-2 border-purple-600'
-                    : isDark
-                      ? 'text-gray-400 hover:text-gray-200'
-                      : 'text-gray-600 hover:text-gray-800'
-                }`}
-              >
-                설정
-              </button>
-              <button
-                onClick={() => setActiveTab('shortcuts')}
-                className={`flex-1 px-4 py-3 font-medium transition-colors ${
-                  activeTab === 'shortcuts'
-                    ? 'text-purple-600 border-b-2 border-purple-600'
-                    : isDark
-                      ? 'text-gray-400 hover:text-gray-200'
-                      : 'text-gray-600 hover:text-gray-800'
-                }`}
-              >
-                단축키
-              </button>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Quick Access */}
+          <div className="space-y-6">
+            {/* 즐겨찾기 */}
+            <div className={`${
+              isDarkMode 
+                ? 'bg-gray-800 border-gray-700' 
+                : 'bg-white border-slate-200'
+            } rounded-2xl shadow-sm border p-5`}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className={`text-lg font-semibold flex items-center gap-2 ${
+                  isDarkMode ? 'text-white' : 'text-slate-800'
+                }`}>
+                  <Star className="w-5 h-5 text-yellow-500" />
+                  즐겨찾기
+                </h2>
+              </div>
+              <div className="space-y-2">
+                {favorites.length === 0 ? (
+                  <p className={`text-sm text-center py-4 ${
+                    isDarkMode ? 'text-gray-400' : 'text-slate-400'
+                  }`}>즐겨찾기가 비어있습니다</p>
+                ) : (
+                  favorites.slice(0, 5).map((song, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setSelectedSong(song);
+                        setEditedLyrics(song.lyrics);
+                        setLyricsLines(song.lyrics.split('\n').filter(line => line.trim()));
+                      }}
+                      className={`w-full p-3 rounded-xl text-left transition-colors ${
+                        isDarkMode 
+                          ? 'bg-gray-700 hover:bg-gray-600' 
+                          : 'bg-slate-50 hover:bg-slate-100'
+                      }`}
+                    >
+                      <p className={`font-medium text-sm ${
+                        isDarkMode ? 'text-gray-100' : 'text-slate-800'
+                      }`}>{song.title}</p>
+                      <p className={`text-xs ${
+                        isDarkMode ? 'text-gray-400' : 'text-slate-500'
+                      }`}>{song.artist}</p>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
+
+            {/* 최근 검색 */}
+            <div className={`${
+              isDarkMode 
+                ? 'bg-gray-800 border-gray-700' 
+                : 'bg-white border-slate-200'
+            } rounded-2xl shadow-sm border p-5`}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className={`text-lg font-semibold flex items-center gap-2 ${
+                  isDarkMode ? 'text-white' : 'text-slate-800'
+                }`}>
+                  <Clock className="w-5 h-5 text-blue-500" />
+                  최근 검색
+                </h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {recentSearches.length === 0 ? (
+                  <p className={`text-sm w-full text-center py-2 ${
+                    isDarkMode ? 'text-gray-400' : 'text-slate-400'
+                  }`}>검색 기록이 없습니다</p>
+                ) : (
+                  recentSearches.map((search, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setSearchQuery(search);
+                        handleSearch(search);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        isDarkMode 
+                          ? 'bg-blue-900/30 hover:bg-blue-900/50 text-blue-400' 
+                          : 'bg-blue-50 hover:bg-blue-100 text-blue-600'
+                      }`}
+                    >
+                      {search}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Center Column - Main Content */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Lyrics Editor */}
+            {showLyricsEditor && selectedSong && (
+              <SimpleLyricsEditor
+                lyrics={editedLyrics}
+                artist={selectedSong.artist}
+                title={selectedSong.title}
+                onLyricsChange={setEditedLyrics}
+                isDarkMode={isDarkMode}
+              />
+            )}
             
-            {/* 탭 컨텐츠 */}
-            <div className="p-8">
-              {activeTab === 'preview' && (
-                <div className="space-y-6">
-                  {/* 발음 전환 */}
-                  {pronunciation && detectedLanguage !== 'ko' && (
-                    <div className="flex justify-center">
+            {selectedSong ? (
+              <>
+                {/* Song Info & Controls */}
+                <div className={`${
+                  isDarkMode 
+                    ? 'bg-gray-800 border-gray-700' 
+                    : 'bg-white border-slate-200'
+                } rounded-2xl shadow-sm border p-6`}>
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h2 className={`text-2xl font-bold ${
+                        isDarkMode ? 'text-white' : 'text-slate-800'
+                      }`}>{selectedSong.title}</h2>
+                      <p className={`text-lg ${
+                        isDarkMode ? 'text-gray-300' : 'text-slate-600'
+                      }`}>{selectedSong.artist}</p>
+                    </div>
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => setShowPronunciation(!showPronunciation)}
-                        className={`px-4 py-2 rounded-xl font-medium transition-all ${
-                          isDark
-                            ? 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30'
-                            : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                        onClick={reSearch}
+                        className={`p-2 rounded-lg transition-colors ${
+                          isDarkMode 
+                            ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                        }`}
+                        title="재검색"
+                      >
+                        <RefreshCw className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={toggleFavorite}
+                        className={`p-2 rounded-lg transition-colors ${
+                          isFavorite 
+                            ? 'bg-yellow-100 text-yellow-600' 
+                            : isDarkMode 
+                              ? 'bg-gray-700 text-gray-400 hover:text-yellow-500' 
+                              : 'bg-slate-100 text-slate-400 hover:text-yellow-600'
                         }`}
                       >
-                        <span className="inline-block mr-2"><MicIcon /></span>
-                        {showPronunciation ? '원본 보기' : '발음 보기'}
+                        <Star className="w-5 h-5" fill={isFavorite ? 'currentColor' : 'none'} />
                       </button>
                     </div>
-                  )}
-                  
-                  {/* 크로마키 프리뷰 */}
-                  {renderChromaPreview()}
-                  
-                  {/* 재생 컨트롤 */}
-                  <div className="flex items-center justify-center gap-4">
-                    <button
-                      onClick={handleReset}
-                      className={`p-3 rounded-xl transition-all hover:scale-110 ${
-                        isDark
-                          ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                      }`}
-                    >
-                      <ResetIcon />
-                    </button>
-                    <button
-                      onClick={handlePlayPause}
-                      className={`p-4 rounded-xl transition-all hover:scale-110 shadow-xl ${
-                        isDark
-                          ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white'
-                          : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white'
-                      }`}
-                    >
-                      {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                    </button>
-                    <button
-                      onClick={() => {
-                        const lines = (showPronunciation ? pronunciation : lyrics).split('\n').filter(l => l.trim());
-                        const newIndex = Math.min(currentLineIndex + 1, lines.length - 1);
-                        setCurrentLineIndex(newIndex);
-                        localStorage.setItem('current_line_index', newIndex.toString());
-                      }}
-                      className={`p-3 rounded-xl transition-all hover:scale-110 ${
-                        isDark
-                          ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                      }`}
-                    >
-                      <NextIcon />
-                    </button>
                   </div>
-                  
-                  {/* 진행 상태 */}
-                  <div className={`text-center text-sm ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}>
-                    라인 {currentLineIndex + 1} / {(showPronunciation ? pronunciation : lyrics).split('\n').filter(l => l.trim()).length}
-                  </div>
-                </div>
-              )}
-              
-              {activeTab === 'settings' && (
-                <div className="space-y-6">
-                  {/* 크로마키 색상 */}
-                  <div>
-                    <label className={`text-sm font-medium mb-3 block ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>크로마키 색상</label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {[
-                        { color: '#00FF00', name: '녹색' },
-                        { color: '#0000FF', name: '파란색' },
-                        { color: '#FF00FF', name: '마젠타' }
-                      ].map((item) => (
-                        <button
-                          key={item.color}
-                          onClick={() => setChromaColor(item.color)}
-                          className={`py-3 rounded-xl font-medium transition-all ${
-                            chromaColor === item.color
-                              ? isDark
-                                ? 'bg-purple-500/30 text-purple-400 border-2 border-purple-400'
-                                : 'bg-purple-100 text-purple-700 border-2 border-purple-600'
-                              : isDark
-                                ? 'bg-gray-700 text-gray-300 border-2 border-transparent hover:border-gray-600'
-                                : 'bg-gray-100 text-gray-700 border-2 border-transparent hover:border-gray-300'
-                          }`}
-                        >
-                          {item.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* 글자 크기 */}
-                  <div>
-                    <label className={`text-sm font-medium mb-3 block ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>
-                      글자 크기: {fontSize}px
-                    </label>
+
+                  {/* YouTube URL */}
+                  <div className="mb-4">
                     <input
-                      type="range"
-                      min="30"
-                      max="120"
-                      value={fontSize}
-                      onChange={(e) => setFontSize(Number(e.target.value))}
-                      className="w-full accent-purple-500"
+                      type="text"
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      placeholder="YouTube MR URL (선택사항)"
+                      className={`w-full px-4 py-2 rounded-lg text-sm ${
+                        isDarkMode 
+                          ? 'bg-gray-700 text-white placeholder-gray-400' 
+                          : 'bg-slate-50 text-slate-800 placeholder-slate-400'
+                      } focus:outline-none focus:ring-2 focus:ring-blue-500`}
                     />
                   </div>
-                  
-                  {/* OBS URL */}
-                  {obsUrl && (
-                    <div>
-                      <label className={`text-sm font-medium mb-3 block ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>OBS 브라우저 소스</label>
-                      <div className={`p-4 rounded-xl ${
-                        isDark ? 'bg-gray-900/50' : 'bg-gray-50'
-                      }`}>
-                        <div className={`text-xs break-all mb-3 ${
-                          isDark ? 'text-gray-400' : 'text-gray-600'
+
+                  {/* Language Selection */}
+                  <div className="mb-4">
+                    <label className={`block text-sm font-medium mb-2 ${
+                      isDarkMode ? 'text-gray-300' : 'text-slate-700'
+                    }`}>
+                      번역 언어 선택
+                    </label>
+                    <LanguageSelector
+                      selectedLanguages={targetLanguages}
+                      onLanguageChange={setTargetLanguages}
+                      isDarkMode={isDarkMode}
+                    />
+                  </div>
+
+                  {/* Quick Translation */}
+                  <div className="mb-4">
+                    <button
+                      onClick={translateLyrics}
+                      disabled={isTranslating || targetLanguages.length === 0}
+                      className="w-full px-4 py-3 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors"
+                    >
+                      {isTranslating 
+                        ? '번역중...' 
+                        : targetLanguages.length === 0 
+                          ? '번역할 언어를 선택하세요'
+                          : `${targetLanguages.length}개 언어로 번역`
+                      }
+                    </button>
+                  </div>
+
+                  {/* Current Line Display with Multiple Translations */}
+                  <div className={`rounded-xl p-6 mb-4 ${
+                    isDarkMode 
+                      ? 'bg-gradient-to-br from-blue-900/30 to-purple-900/30' 
+                      : 'bg-gradient-to-br from-blue-50 to-purple-50'
+                  }`}>
+                    <p className={`text-2xl font-bold text-center mb-4 ${
+                      isDarkMode ? 'text-white' : 'text-slate-800'
+                    }`}>
+                      {lyricsLines[currentLineIndex] || '...'}
+                    </p>
+                    
+                    {/* Display all translations */}
+                    {targetLanguages.map((lang) => (
+                      translations[lang]?.[currentLineIndex] && (
+                        <div key={lang} className={`text-center mb-2 ${
+                          isDarkMode ? 'text-gray-300' : 'text-slate-600'
                         }`}>
-                          {obsUrl}
+                          <span className="text-xs opacity-60 mr-2">[{lang.toUpperCase()}]</span>
+                          <span className="text-lg">{translations[lang][currentLineIndex]}</span>
                         </div>
+                      )
+                    ))}
+                    
+                    <p className={`text-sm text-center mt-3 ${
+                      isDarkMode ? 'text-gray-400' : 'text-slate-500'
+                    }`}>
+                      {currentLineIndex + 1} / {lyricsLines.length}
+                    </p>
+                  </div>
+
+                  {/* Playback Controls */}
+                  <div className="flex justify-center gap-2">
+                    <button
+                      onClick={prevLine}
+                      className={`p-3 rounded-xl transition-colors ${
+                        isDarkMode 
+                          ? 'bg-gray-700 hover:bg-gray-600' 
+                          : 'bg-slate-100 hover:bg-slate-200'
+                      }`}
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      className="p-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors"
+                    >
+                      {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                    </button>
+                    <button
+                      onClick={nextLine}
+                      className={`p-3 rounded-xl transition-colors ${
+                        isDarkMode 
+                          ? 'bg-gray-700 hover:bg-gray-600' 
+                          : 'bg-slate-100 hover:bg-slate-200'
+                      }`}
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={resetPlayback}
+                      className={`p-3 rounded-xl transition-colors ${
+                        isDarkMode 
+                          ? 'bg-gray-700 hover:bg-gray-600' 
+                          : 'bg-slate-100 hover:bg-slate-200'
+                      }`}
+                    >
+                      <RotateCcw className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Timing Recording */}
+                  <div className="flex items-center justify-center mt-4 gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isRecordingTimings}
+                        onChange={(e) => setIsRecordingTimings(e.target.checked)}
+                        className="rounded text-blue-500"
+                      />
+                      <span className={`text-sm ${
+                        isDarkMode ? 'text-gray-300' : 'text-slate-600'
+                      }`}>타이밍 기록</span>
+                    </label>
+                    {timingData.length > 0 && (
+                      <span className={`text-sm ${
+                        isDarkMode ? 'text-gray-400' : 'text-slate-500'
+                      }`}>
+                        ({timingData.length}개 기록됨)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Lyrics Editor Toggle */}
+                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div
+                      className={`w-full px-4 py-2 rounded-lg flex items-center justify-between ${
+                        isDarkMode 
+                          ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' 
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      } cursor-pointer`}
+                    >
+                      <button
+                        onClick={() => setShowLyricsEditor(!showLyricsEditor)}
+                        className="flex items-center gap-2 flex-1 text-left"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                        가사 편집
+                      </button>
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(obsUrl);
-                            toast.success('URL 복사됨!');
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyLyrics();
                           }}
-                          className={`w-full py-2 rounded-xl font-medium transition-all ${
-                            isDark
-                              ? 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30'
-                              : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                          className={`p-1 rounded ${
+                            isDarkMode ? 'hover:bg-gray-600' : 'hover:bg-slate-300'
                           }`}
                         >
-                          URL 복사
+                          <Copy className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setShowLyricsEditor(!showLyricsEditor)}
+                          className="p-1"
+                        >
+                          {showLyricsEditor ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
-              
-              {activeTab === 'shortcuts' && (
-                <div className={`space-y-3 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  <div className="flex justify-between py-2">
-                    <span>재생/일시정지</span>
-                    <kbd className={`px-3 py-1 rounded-lg text-sm font-mono ${
-                      isDark ? 'bg-gray-700' : 'bg-gray-200'
-                    }`}>Space</kbd>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span>리셋</span>
-                    <kbd className={`px-3 py-1 rounded-lg text-sm font-mono ${
-                      isDark ? 'bg-gray-700' : 'bg-gray-200'
-                    }`}>R</kbd>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span>다음 라인</span>
-                    <kbd className={`px-3 py-1 rounded-lg text-sm font-mono ${
-                      isDark ? 'bg-gray-700' : 'bg-gray-200'
-                    }`}>→</kbd>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span>이전 라인</span>
-                    <kbd className={`px-3 py-1 rounded-lg text-sm font-mono ${
-                      isDark ? 'bg-gray-700' : 'bg-gray-200'
-                    }`}>←</kbd>
+                    
+                    {showLyricsEditor && (
+                      <div className="mt-4">
+                        <textarea
+                          value={editedLyrics}
+                          onChange={(e) => setEditedLyrics(e.target.value)}
+                          className={`w-full h-64 p-4 rounded-xl text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                            isDarkMode 
+                              ? 'bg-gray-700 text-gray-100' 
+                              : 'bg-slate-50 text-slate-800'
+                          }`}
+                        />
+                        <button
+                          onClick={() => {
+                            setLyricsLines(editedLyrics.split('\n').filter(line => line.trim()));
+                            toast.success('가사가 적용되었습니다');
+                          }}
+                          className="mt-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm"
+                        >
+                          적용
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
+              </>
+            ) : (
+              <div className={`${
+                isDarkMode 
+                  ? 'bg-gray-800 border-gray-700' 
+                  : 'bg-white border-slate-200'
+              } rounded-2xl shadow-sm border p-12`}>
+                <div className="text-center">
+                  <Mic className={`w-16 h-16 mx-auto mb-4 ${
+                    isDarkMode ? 'text-gray-600' : 'text-slate-300'
+                  }`} />
+                  <p className={`text-lg mb-2 ${
+                    isDarkMode ? 'text-gray-200' : 'text-slate-600'
+                  }`}>노래를 검색해주세요</p>
+                  <p className={`text-sm ${
+                    isDarkMode ? 'text-gray-400' : 'text-slate-400'
+                  }`}>아티스트와 제목을 입력하면 가사를 찾을 수 있습니다</p>
+                </div>
+              </div>
+            )}
+
+            {/* Settings */}
+            <div className={`${
+              isDarkMode 
+                ? 'bg-gray-800 border-gray-700' 
+                : 'bg-white border-slate-200'
+            } rounded-2xl shadow-sm border p-6`}>
+              <h3 className={`text-lg font-semibold mb-4 flex items-center gap-2 ${
+                isDarkMode ? 'text-white' : 'text-slate-800'
+              }`}>
+                <Settings className={`w-5 h-5 ${
+                  isDarkMode ? 'text-gray-400' : 'text-slate-600'
+                }`} />
+                OBS 설정
+              </h3>
+              <div className="space-y-4">
+                {/* Show Original Toggle */}
+                <div className="flex items-center justify-between">
+                  <label className={`text-sm font-medium ${
+                    isDarkMode ? 'text-gray-300' : 'text-slate-700'
+                  }`}>원문 가사 표시</label>
+                  <button
+                    onClick={() => {
+                      const newValue = !showOriginalLyrics;
+                      setShowOriginalLyrics(newValue);
+                      localStorage.setItem('show_original', newValue.toString());
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      showOriginalLyrics 
+                        ? 'bg-blue-500' 
+                        : isDarkMode ? 'bg-gray-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      showOriginalLyrics ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Font Size */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-slate-700'
+                  }`}>글자 크기: {fontSize}px</label>
+                  <input
+                    type="range"
+                    min="30"
+                    max="100"
+                    value={fontSize}
+                    onChange={(e) => {
+                      const size = Number(e.target.value);
+                      setFontSize(size);
+                      localStorage.setItem('obs_settings', JSON.stringify({
+                        fontSize: size,
+                        textColor,
+                        highlightColor,
+                        chromaKey
+                      }));
+                    }}
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Colors */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${
+                    isDarkMode ? 'text-gray-300' : 'text-slate-700'
+                  }`}>색상 설정</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-xs block mb-1">텍스트</label>
+                      <input
+                        type="color"
+                        value={textColor}
+                        onChange={(e) => {
+                          setTextColor(e.target.value);
+                          localStorage.setItem('obs_settings', JSON.stringify({
+                            fontSize,
+                            textColor: e.target.value,
+                            highlightColor,
+                            chromaKey
+                          }));
+                        }}
+                        className="w-full h-8 rounded cursor-pointer"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs block mb-1">크로마키</label>
+                      <input
+                        type="color"
+                        value={chromaKey}
+                        onChange={(e) => {
+                          setChromaKey(e.target.value);
+                          localStorage.setItem('obs_settings', JSON.stringify({
+                            fontSize,
+                            textColor,
+                            highlightColor,
+                            chromaKey: e.target.value
+                          }));
+                        }}
+                        className="w-full h-8 rounded cursor-pointer"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs block mb-1">하이라이트</label>
+                      <input
+                        type="color"
+                        value={highlightColor}
+                        onChange={(e) => {
+                          setHighlightColor(e.target.value);
+                          localStorage.setItem('obs_settings', JSON.stringify({
+                            fontSize,
+                            textColor,
+                            highlightColor: e.target.value,
+                            chromaKey
+                          }));
+                        }}
+                        className="w-full h-8 rounded cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        )}
-      </main>
+        </div>
+
+        {/* Keyboard Shortcuts Help */}
+        <div className={`mt-6 text-center text-xs ${
+          isDarkMode ? 'text-gray-500' : 'text-slate-500'
+        }`}>
+          단축키: Space(다음) • Shift+Space(이전) • ←→(이동) • R(리셋)
+        </div>
+      </div>
     </div>
   );
 }

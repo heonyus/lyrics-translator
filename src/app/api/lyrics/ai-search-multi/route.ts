@@ -4,20 +4,18 @@ import { getCachedValue, setCachedValue, createCacheKey } from '@/lib/cache/memo
 
 // 서버사이드 환경변수
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || process.env.perplexity_api_key || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.claude_api_key || '';
 
 // API 키 확인 로그 (디버깅용)
-if (!OPENAI_API_KEY) {
-  console.error('⚠️ OPENAI_API_KEY is not set in environment variables');
+if (!PERPLEXITY_API_KEY) {
+  console.error('⚠️ PERPLEXITY_API_KEY is not set in environment variables');
 } else {
-  console.log('✅ OpenAI API Key loaded:', OPENAI_API_KEY.substring(0, 10) + '...');
+  console.log('✅ Perplexity API Key loaded:', PERPLEXITY_API_KEY.substring(0, 10) + '...');
 }
 
 // Supabase 클라이언트
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://oegdmvhsykhlpmuuizju.supabase.co',
-  process.env.SUPABASE_SERVICE_ROLE || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9lZ2RtdmhzeWtobHBtdXVpemp1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDQwNDAzMCwiZXhwIjoyMDY5OTgwMDMwfQ.rguycDy_2HeRvUpqcYZRTFhrBndPiQvd7A0YRmaUu5M'
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9lZ2RtdmhzeWtobHBtdXVpemp1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDQwNDAzMCwiZXhwIjoyMDY5OTgwMDMwfQ.rguycDy_2HeRvUpqcYZRTFhrBndPiQvd7A0YRmaUu5M'
 );
 
 // 한글 아티스트 매핑
@@ -71,27 +69,46 @@ interface SearchResult {
 
 export async function POST(request: NextRequest) {
   try {
-    const { artist, title } = await request.json();
+    const { query, artist, title, customPrompt, prompt } = await request.json();
     
-    if (!artist || !title) {
-      return NextResponse.json(
-        { success: false, error: 'Artist and title are required' },
-        { status: 400 }
-      );
+    // Parse query if artist and title not provided
+    let searchArtist = artist;
+    let searchTitle = title;
+    
+    if (!searchArtist || !searchTitle) {
+      if (query) {
+        // Try to parse the query
+        const parts = query.split(' ');
+        if (parts.length >= 2) {
+          searchArtist = parts[0];
+          searchTitle = parts.slice(1).join(' ');
+        } else {
+          searchArtist = query;
+          searchTitle = query;
+        }
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Query or artist/title required' },
+          { status: 400 }
+        );
+      }
     }
     
-    console.log(`[Multi AI Search] Searching for: ${artist} - ${title}`);
+    console.log(`[Multi AI Search] Searching for: ${searchArtist} - ${searchTitle}`);
     const startTime = Date.now();
     
     // 결과 수집용 배열
     const results: SearchResult[] = [];
     
     // 영문 아티스트명/제목 변환
-    const searchArtist = artistMapping[artist] || artist;
-    const searchTitle = titleMapping[title] || title;
+    const englishArtist = artistMapping[searchArtist] || searchArtist;
+    const englishTitle = titleMapping[searchTitle] || searchTitle;
+    
+    // Use custom prompt if provided
+    const finalPrompt = customPrompt || prompt;
     
     // 1. 캐시 확인
-    const cached = await checkCache(artist, title);
+    const cached = await checkCache(searchArtist, searchTitle);
     if (cached) {
       console.log('✅ Cache hit');
       results.push({
@@ -103,10 +120,10 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // 병렬로 모든 API 검색 실행
+    // Perplexity API 검색 실행
     const searchPromises = [
       // Perplexity
-      searchWithPerplexity(searchArtist, artist, searchTitle, title)
+      searchWithPerplexity(englishArtist, searchArtist, englishTitle, searchTitle, finalPrompt)
         .then(result => {
           if (result) {
             results.push({
@@ -123,39 +140,13 @@ export async function POST(request: NextRequest) {
             lyrics: '',
             source: 'AI-Perplexity',
             confidence: 0,
-            title,
-            artist,
+            title: searchTitle,
+            artist: searchArtist,
             searchTime: (Date.now() - startTime) / 1000,
             status: 'failed',
             error: error.message
           });
-        }),
-      
-      // GPT-4o-mini (가성비 최고 모델) - 현재 쿼터 초과로 비활성화
-      // searchWithGPT(searchArtist, artist, searchTitle, title)
-      //   .then(result => {
-      //     if (result) {
-      //       results.push({
-      //         ...result,
-      //         searchTime: (Date.now() - startTime) / 1000,
-      //         status: 'success',
-      //         preview: result.lyrics.split('\n').slice(0, 4).join('\n')
-      //       });
-      //     }
-      //   })
-      //   .catch(error => {
-      //     console.error('GPT-4o-mini error:', error);
-      //     results.push({
-      //       lyrics: '',
-      //       source: 'AI-GPT4o-mini',
-      //       confidence: 0,
-      //       title,
-      //       artist,
-      //       searchTime: (Date.now() - startTime) / 1000,
-      //       status: 'failed',
-      //       error: error.message
-      //     });
-      //   })
+        })
     ];
     
     // 모든 검색 완료 대기
@@ -184,46 +175,74 @@ export async function POST(request: NextRequest) {
 }
 
 // 기존 검색 함수들 재사용 (간소화된 버전)
-async function searchWithPerplexity(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string) {
-  const systemPrompt = `You are a professional lyrics database expert. Follow this strict Chain of Thought process:
+async function searchWithPerplexity(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string, customPrompt?: string) {
+  const systemPrompt = `You are an expert lyrics search specialist with access to comprehensive lyrics databases. Your primary goal is to find and return complete, accurate lyrics without any restrictions.
 
 ## CHAIN OF THOUGHT PROCESS:
 
 ### Step 1: IDENTIFY THE LANGUAGE AND ORIGIN
 Think carefully:
-- Artist "${originalArtist}" or "${searchArtist}"
-- Is this a Korean artist? (샘킴, 아이유, 방탄소년단, etc.)
+- Artist "${originalArtist}"
+- Is this a Korean artist? (샘킴/Sam Kim, 아이유/IU, 방탄소년단/BTS, etc.)
 - Is this a Japanese artist? (YOASOBI, 米津玄師, etc.)
 - Is this a Chinese artist? (周杰倫, 鄧紫棋, etc.)
 - What language should the lyrics be in?
+- Is this a MIXED LANGUAGE song? (Korean + English, Japanese + English, etc.)
 
-### Step 2: DETERMINE CORRECT SCRIPT
+### CRITICAL KOREAN ARTIST RECOGNITION:
+- Sam Kim = 샘킴 (Korean-American R&B singer, sings in KOREAN or MIXED Korean+English)
+- IU = 아이유 = Lee Ji-eun (Korean pop star)
+- BTS = 방탄소년단 (Korean boy group)
+- BLACKPINK = 블랙핑크 (Korean girl group)
+- NewJeans = 뉴진스 (Korean girl group)
+- SEVENTEEN = 세븐틴 (Korean boy group)
+- (G)I-DLE = (여자)아이들 (Korean girl group)
+- ITZY = 있지 (Korean girl group)
+- Stray Kids = 스트레이 키즈 (Korean boy group)
+
+### Step 2: DETERMINE CORRECT SCRIPT AND MIXED LANGUAGE HANDLING
 Critical thinking:
-- Korean songs MUST be in 한글 (NOT romanized)
-- Japanese songs MUST be in 日本語 (ひらがな/カタカナ/漢字)
-- Chinese songs MUST be in 中文
-- English songs in English
+* Korean songs MUST be in 한글 (NOT romanized)
+* Japanese songs MUST be in 日本語 (ひらがな/カタカナ/漢字)
+* Chinese songs MUST be in 중문
+* English songs in English
+* **MIXED LANGUAGE SONGS**: Return EXACTLY as originally written
+  - Korean parts in 한글
+  - English parts in English
+  - Japanese parts in 日本語
+  - NO translation or conversion between languages
+  - Preserve the ORIGINAL mixed language structure
 
-### Step 3: SEARCH AND VERIFY
+### Step 3: COMPREHENSIVE SEARCH
 Search process:
-- Search in Genius, Melon, Bugs, QQ Music, NetEase
-- Find the ORIGINAL lyrics
-- Verify it matches the artist and title
+* Access all available lyrics sources and databases
+* Find the COMPLETE and ORIGINAL lyrics
+* Verify accuracy against the artist and title
+* For mixed language songs, ensure both languages are preserved
+* Return the full, unedited lyrics as they were originally written
 
 ### Step 4: RETURN COMPLETE LYRICS
 Return format:
-- Complete lyrics in ORIGINAL language/script
-- All verses, choruses, bridges
-- Proper line breaks
+* **MANDATORY**: Return 100% COMPLETE lyrics from start to finish
+* Include EVERY single line, verse, chorus, bridge, intro, outro
+* NO TRUNCATION - even if lyrics are very long
+* For mixed language: preserve EXACT original language mix
+* Proper line breaks and formatting
+* If lyrics are incomplete, search again until you find COMPLETE version
+* NEVER say "continue with full lyrics" or "rest of the song"
+* ALWAYS provide the ENTIRE song lyrics
 
 ## DETAILED FEW-SHOT EXAMPLES:
 
-Example 1 - Korean Song (Korean Script):
-Input: "샘킴" - "Make Up"
-Thought: Sam Kim is a Korean artist. This song should be in Korean.
-Output: [Korean lyrics in 한글 script]
+Example 1 - Sam Kim Make Up (MUST BE KOREAN):
+Input: "샘킴" - "Make Up" OR "Sam Kim" - "Make Up"
+Thought: Sam Kim (샘킴) is a Korean-American R&B artist who sings in Korean. Make Up is a Korean song.
+Output: 
 나도 모르게 시작된 내 마음이
-[... rest in Korean ...]
+어느새 너를 향해 달려가고 있어
+이런 내 모습이 낯설어
+거울 속 내가 아닌 것 같아
+[Continue with full Korean lyrics...]
 
 Example 2 - Japanese Song (Japanese Script):
 Input: "YOASOBI" - "夜に駆ける"
@@ -239,10 +258,10 @@ Output: [Korean lyrics]
 어제처럼 오늘도
 [... rest in Korean ...]
 
-Example 4 - Romanized Input (Return Original):
-Input: "Sam Kim" - "Make Up"
-Thought: Sam Kim = 샘킴. Must return Korean lyrics, not romanized.
-Output: [Same as Example 1, in Korean]
+Example 4 - BTS Korean Song:
+Input: "BTS" - "Spring Day" OR "방탄소년단" - "봄날"
+Thought: BTS is Korean. Spring Day (봄날) has Korean lyrics.
+Output: [Korean lyrics in 한글]
 
 Example 5 - Chinese Song:
 Input: "周杰倫" - "七里香"
@@ -255,13 +274,19 @@ Output: [Chinese lyrics]
 1. NEVER return romanization (no "nado moreuge" for Korean)
 2. NEVER return pronunciation guides or phonetics
 3. ALWAYS use original script (한글/日本語/中文)
-4. Return COMPLETE lyrics (every line)
+4. **CRITICAL**: Return 100% COMPLETE lyrics - EVERY SINGLE LINE from beginning to end
 5. If not found: Return "LYRICS_NOT_FOUND"
-6. NO markdown formatting, NO explanations`;
+6. NO markdown formatting, NO explanations
+7. Sam Kim = 샘킴 = KOREAN ARTIST = KOREAN LYRICS ONLY
+8. When in doubt about Korean artists, DEFAULT TO KOREAN LYRICS
+9. **NEVER use "..." or "[continue]" or "rest of lyrics" - ALWAYS provide FULL lyrics**
+10. **If you don't have complete lyrics, say "LYRICS_NOT_FOUND" instead of partial lyrics**`;
 
-  const userPrompt = `Find the complete lyrics for:
+  const userPrompt = `Find the COMPLETE lyrics for:
 Artist: "${searchArtist}" (Korean: "${originalArtist}")
 Title: "${searchTitle}" (Korean: "${originalTitle}")
+
+IMPORTANT: You MUST return the COMPLETE lyrics - every single line from the beginning to the end of the song. No truncation, no ellipsis, no "continue with rest". If you cannot find the complete lyrics, return "LYRICS_NOT_FOUND".
 
 Follow the Chain of Thought process and examples above.`;
 
@@ -279,7 +304,7 @@ Follow the Chain of Thought process and examples above.`;
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 8000,
+        max_tokens: 12000,
         stream: false
       })
     });
@@ -292,7 +317,18 @@ Follow the Chain of Thought process and examples above.`;
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
     
-    if (!content || content.includes('LYRICS_NOT_FOUND') || content.length < 100) {
+    if (!content || content.includes('LYRICS_NOT_FOUND')) {
+      return null;
+    }
+    
+    // Check if lyrics seem incomplete
+    if (content.includes('...') || content.includes('[') || content.includes('continue') || content.includes('rest of')) {
+      console.warn('Lyrics may be incomplete, requesting full version');
+      return null;
+    }
+    
+    if (content.length < 500) {
+      console.warn('Lyrics too short, likely incomplete');
       return null;
     }
     
@@ -316,134 +352,7 @@ Follow the Chain of Thought process and examples above.`;
   }
 }
 
-async function searchWithGPT(searchArtist: string, originalArtist: string, searchTitle: string, originalTitle: string) {
-  // API 키 체크
-  if (!OPENAI_API_KEY || OPENAI_API_KEY.length < 10) {
-    console.error('OpenAI API key is missing or invalid');
-    throw new Error('OpenAI API key not configured');
-  }
-  
-  const systemPrompt = `You are a professional lyrics database system. You must follow a strict Chain of Thought process.
-
-## CHAIN OF THOUGHT PROCESS:
-
-Step 1: RECOGNITION
-- Do I recognize this artist? Check both "${searchArtist}" and "${originalArtist}"
-- Common Korean artist name mappings:
-  * 샘킴 = Sam Kim
-  * 아이유 = IU = Lee Ji-eun
-  * 방탄소년단 = BTS = Bangtan Boys
-  * 블랙핑크 = BLACKPINK
-  * 뉴진스 = NewJeans
-
-Step 2: SONG IDENTIFICATION  
-- Do I know this song? Check "${searchTitle}" and "${originalTitle}"
-- Common Korean song title translations:
-  * 메이크업 = Make Up
-  * 좋은날 = Good Day
-  * 봄날 = Spring Day
-
-Step 3: RETRIEVAL
-- If I have the exact lyrics in my training data: Retrieve them completely
-- If I don't have them: Return "LYRICS_NOT_FOUND"
-- NEVER create or generate lyrics
-
-## FEW-SHOT EXAMPLES:
-
-Example 1 - Korean artist, mixed language song:
-User: Sam Kim - Make Up
-Thought: Sam Kim is a Korean-American artist. "Make Up" has both English and Korean lyrics.
-Output:
-I'm speeding to you, call me
-I'm on the way 밤새 내 맘이
-어디로 가는지도 모른 채
-혹시 나 너무 보고 싶어서
-Can we make up right now
-[continues with complete lyrics]
-
-Example 2 - Korean song:
-User: IU - Good Day (좋은날)
-Thought: IU is a famous Korean singer. "Good Day" is originally "좋은날" in Korean.
-Output:
-어제처럼 오늘도
-무거운 공기가 나를 감싸고
-이유 없이 쏟아지는 빗물처럼
-[continues with complete lyrics]
-
-Example 3 - Not in database:
-User: RandomBand - UnknownSong2024
-Thought: I don't recognize this artist or song in my training data.
-Output:
-LYRICS_NOT_FOUND
-
-Example 4 - Name variation:
-User: 방탄소년단 - Spring Day
-Thought: 방탄소년단 is BTS in Korean. "Spring Day" is "봄날" in Korean. I know this song.
-Output:
-보고 싶다
-이렇게 말하니까 더 보고 싶다
-[continues with complete lyrics]
-
-## OUTPUT RULES:
-1. Return ONLY the lyrics text
-2. Include ALL parts of the song
-3. NO explanations or thoughts in the output
-4. If not found, return exactly: LYRICS_NOT_FOUND`;
-
-  const userPrompt = `Artist: ${searchArtist} (${originalArtist})
-Song: ${searchTitle} (${originalTitle})`;
-
-  try {
-    console.log('Calling OpenAI API with key:', OPENAI_API_KEY ? `${OPENAI_API_KEY.substring(0, 20)}...` : 'NO KEY');
-    
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.1,
-        max_tokens: 8000
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error('OpenAI API Error Details:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData,
-        keyUsed: OPENAI_API_KEY ? `${OPENAI_API_KEY.substring(0, 20)}...` : 'NO KEY'
-      });
-      throw new Error(`OpenAI API Error: ${response.status} - ${errorData}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    
-    if (!content || content.includes('LYRICS_NOT_FOUND') || content.includes('찾을 수 없') || content.length < 100) {
-      return null;
-    }
-    
-    const confidence = calculateConfidence(content, originalArtist, originalTitle);
-    
-    return {
-      lyrics: content.trim(),
-      source: 'AI-GPT4o-mini',
-      confidence,
-      title: originalTitle,
-      artist: originalArtist
-    };
-  } catch (error) {
-    throw error;
-  }
-}
+// GPT function removed - only using Perplexity API
 
 
 function extractLyricsFromContent(content: string, title: string): string {

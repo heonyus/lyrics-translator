@@ -18,26 +18,32 @@ interface TranslateRequest {
 }
 
 const languageNames: Record<string, string> = {
-  en: 'English',
+  // Asian Languages
   ko: 'Korean',
   ja: 'Japanese',
-  zh: 'Chinese',
-  es: 'Spanish',
-  fr: 'French',
-  de: 'German',
-  pt: 'Portuguese',
-  ru: 'Russian',
-  ar: 'Arabic',
-  hi: 'Hindi',
+  zh: 'Chinese (Simplified)',
+  'zh-TW': 'Chinese (Traditional)',
   th: 'Thai',
   vi: 'Vietnamese',
   id: 'Indonesian',
+  
+  // European Languages
+  en: 'English',
+  es: 'Spanish',
+  fr: 'French',
+  de: 'German',
   it: 'Italian',
-  nl: 'Dutch',
+  pt: 'Portuguese',
+  ru: 'Russian',
   pl: 'Polish',
-  tr: 'Turkish',
+  nl: 'Dutch',
   sv: 'Swedish',
-  no: 'Norwegian'
+  no: 'Norwegian',
+  
+  // Middle Eastern & Others
+  ar: 'Arabic',
+  tr: 'Turkish',
+  he: 'Hebrew'
 };
 
 export async function POST(request: NextRequest) {
