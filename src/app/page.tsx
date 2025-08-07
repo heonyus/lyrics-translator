@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, Copy, Monitor, Smartphone, Music, Settings, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ExternalLink, Edit, RefreshCw, FileText, Eye, Globe, Loader } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import LyricsResultSelector from '@/components/LyricsResultSelector';
@@ -42,6 +42,10 @@ export default function MobileDashboard() {
   const [translations, setTranslations] = useState<any>({});
   const [pronunciations, setPronunciations] = useState<string[] | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
+
+  // Search session control (to cancel/ignore late results)
+  const searchSessionRef = useRef(0);
+  const cancelSearchRef = useRef<(() => void) | null>(null);
   
   // Editor states
   const [showLyricsEditor, setShowLyricsEditor] = useState(false);
@@ -112,11 +116,18 @@ export default function MobileDashboard() {
 
   // Run multiple providers concurrently and append results as soon as they arrive
   const parallelSearch = async (artist: string, title: string, query: string, forceRefresh = false) => {
+    // new session id
+    const mySession = ++searchSessionRef.current;
     const controllers: AbortController[] = [];
     const addController = () => { const c = new AbortController(); controllers.push(c); return c; };
+    // expose canceler for outer handlers
+    cancelSearchRef.current = () => controllers.forEach(c => { try { c.abort(); } catch {} });
     const enqueue = (arr: any[]) => {
+      // ignore late results from older sessions
+      if (mySession !== searchSessionRef.current) return;
       if (arr && arr.length > 0) {
         setSearchResults(prev => {
+          if (mySession !== searchSessionRef.current) return prev;
           // dedupe by lyrics+source key
           const seen = new Set(prev.map((r: any) => `${r.source}|${(r.lyrics||'').slice(0,50)}`));
           const merged = [...prev];
@@ -182,6 +193,7 @@ export default function MobileDashboard() {
       (async () => {
         while (true) {
           await new Promise(r => setTimeout(r, 200));
+          if (mySession !== searchSessionRef.current) break; // canceled/invalidated
           if ((searchResults as any[]).length > 0) break;
         }
       })(),
@@ -197,6 +209,11 @@ export default function MobileDashboard() {
     e?.preventDefault();
     if (!searchQuery.trim()) return;
     
+    // cancel previous search session
+    cancelSearchRef.current?.();
+    // invalidate prior sessions so late results are ignored
+    searchSessionRef.current++;
+
     setIsSearching(true);
     setSearchResults([]);
     
@@ -266,6 +283,8 @@ export default function MobileDashboard() {
     
     const query = currentSong.title ? `${currentSong.artist} - ${currentSong.title}` : searchQuery;
     
+    cancelSearchRef.current?.();
+    searchSessionRef.current++;
     setIsSearching(true);
     setSearchResults([]);
     
@@ -281,6 +300,10 @@ export default function MobileDashboard() {
   
   // Select result
   const handleSelectResult = async (result: any) => {
+    // stop accepting/processing any in-flight search results
+    cancelSearchRef.current?.();
+    searchSessionRef.current++;
+    setIsSearching(false);
     const song = {
       title: result.title || searchQuery.split(' - ')[1] || '',
       artist: result.artist || searchQuery.split(' - ')[0] || '',
