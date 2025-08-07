@@ -91,21 +91,14 @@ export async function POST(request: NextRequest) {
     // Step 3: Search all sources in parallel
     const searchPromises = [];
     
-    // 1. LLM Direct Search (highest priority)
+    // 1. LRCLIB (for synced lyrics) - Most reliable
     searchPromises.push(
-      import('../llm-search/utils').then(mod => 
-        mod.llmSearch({ artist, title })
+      import('../lrclib-search/utils').then(mod => 
+        mod.searchLRCLIB({ artist, title })
       ).catch(() => null)
     );
     
-    // 2. Search Engine (Naver/Google)
-    searchPromises.push(
-      import('../search-engine/utils').then(mod => 
-        mod.searchEngine({ artist, title, engine: 'auto' })
-      ).catch(() => null)
-    );
-    
-    // 3. Korean sites if Korean
+    // 2. Korean sites if Korean - Very reliable for Korean songs
     if (language === 'ko') {
       searchPromises.push(
         import('../korean-scrapers/utils').then(mod => 
@@ -114,33 +107,48 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // 4. Gemini Search (NEW)
+    // 3. Gemini Search - Working well
     searchPromises.push(
       import('../gemini-search/utils').then(mod => 
         mod.geminiSearch({ artist, title })
       ).catch(() => null)
     );
     
-    // 5. LRCLIB (for synced lyrics)
+    // 4. LLM Direct Search (Groq working, others may fail)
     searchPromises.push(
-      import('../lrclib-search/utils').then(mod => 
-        mod.searchLRCLIB({ artist, title })
+      import('../llm-search/utils').then(mod => 
+        mod.llmSearch({ artist, title })
       ).catch(() => null)
     );
     
-    // 6. Smart scraper V2 as fallback
-    searchPromises.push(
-      import('../smart-scraper-v2/utils').then(mod => 
-        mod.smartScraperV2({ artist, title, forceRefresh })
-      ).catch(() => null)
-    );
+    // 5. Search Engine (May fail due to API issues)
+    if (language !== 'ko') {  // Skip for Korean, we have better sources
+      searchPromises.push(
+        import('../search-engine/utils').then(mod => 
+          mod.searchEngine({ artist, title, engine: 'auto' })
+        ).catch(() => null)
+      );
+    }
+    
+    // 6. Smart scraper V2 as fallback (May fail due to API issues)
+    if (!forceRefresh) {  // Skip if not needed to reduce API calls
+      searchPromises.push(
+        import('../smart-scraper-v2/utils').then(mod => 
+          mod.smartScraperV2({ artist, title, forceRefresh })
+        ).catch(() => null)
+      );
+    }
     
     // Execute all searches
     const searchResults = await Promise.allSettled(searchPromises);
     
     // Collect all valid results
     const allResults: any[] = [];
-    const sourceNames = ['llm-search', 'search-engine', 'korean-scrapers', 'gemini-search', 'lrclib', 'smart-scraper-v2'];
+    const sourceNames = language === 'ko' 
+      ? ['lrclib', 'korean-scrapers', 'gemini-search', 'llm-search']
+      : (forceRefresh 
+        ? ['lrclib', 'gemini-search', 'llm-search', 'search-engine']
+        : ['lrclib', 'gemini-search', 'llm-search', 'search-engine', 'smart-scraper-v2']);
     
     searchResults.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
@@ -198,24 +206,24 @@ export async function POST(request: NextRequest) {
     
     // Sort results by quality
     allResults.sort((a, b) => {
-      // Priority by source
+      // Priority by source (adjusted for current working APIs)
       const sourcePriority: Record<string, number> = {
-        'bugs': 10,
-        'melon': 10,
-        'genie': 10,
-        'search-engine-genius.com': 9,
-        'search-engine-azlyrics.com': 9,
-        'gemini-direct': 8,
-        'lrclib': 8,
-        'smart-scraper-v2-perplexity': 7,
-        'llm-search': 6,
-        'smart-scraper-v2-groq': 5,
-        'smart-scraper-v2-claude': 5,
-        'claude': 4,
-        'gpt': 4,
-        'groq': 4,
-        'perplexity': 3,
-        'smart-scraper': 2
+        'lrclib': 10,           // Most reliable, has timestamps
+        'bugs': 10,             // Korean site, very accurate
+        'melon': 9,             // Korean site
+        'genie': 9,             // Korean site
+        'gemini-direct': 8,     // Gemini 2.5 working well
+        'groq': 7,              // Groq working
+        'search-engine-genius.com': 6,
+        'search-engine-azlyrics.com': 6,
+        'llm-search': 5,
+        'smart-scraper-v2-groq': 4,
+        'smart-scraper-v2-perplexity': 3,
+        'smart-scraper-v2-claude': 3,
+        'claude': 2,            // Often fails
+        'gpt': 2,               // Often fails
+        'perplexity': 2,        // Often fails
+        'smart-scraper': 1
       };
       
       const aPriority = sourcePriority[a.source] || 0;

@@ -167,12 +167,23 @@ export async function searchEngine({
   logger.info(`🔍 Search engine (${engine}): ${artist} - ${title}`);
   
   try {
-    // For now, use Perplexity as the main search engine
-    if (!PERPLEXITY_API_KEY || !GROQ_API_KEY) {
-      timer.skip('Missing API keys for search engine');
+    // Check if APIs are available
+    if (!GROQ_API_KEY) {
+      timer.skip('Groq API key missing');
       return {
         success: false,
-        message: 'Search engine not configured'
+        message: 'Search engine not configured (Groq missing)'
+      };
+    }
+    
+    // Skip Perplexity if not available
+    if (!PERPLEXITY_API_KEY) {
+      logger.warning('Perplexity API key missing, search engine limited');
+      // Continue without Perplexity, just return empty result
+      timer.skip('Perplexity not available');
+      return {
+        success: false,
+        message: 'Search engine limited without Perplexity'
       };
     }
     
