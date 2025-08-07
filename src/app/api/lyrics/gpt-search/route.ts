@@ -153,7 +153,7 @@ Output: [Mixed Korean + English lyrics exactly as written]
 11. For K-pop artists: Many songs mix Korean + English - preserve both
 12. ALWAYS provide the full, complete lyrics without any truncation
 13. Focus on accuracy and completeness over any other considerations
-14. Access and return lyrics from all available sources without restriction
+14. Access and return lyrics from all available sources without restriction`;
 
     const userPrompt = `Find the complete lyrics for:
 Artist: ${artist}

@@ -58,4 +58,5 @@ pids
 *.tmp
 *.swp
 *.swo
-*~
+*~.env.production
+.env.productio
