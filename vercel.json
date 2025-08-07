@@ -4,20 +4,6 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "outputDirectory": ".next",
-  "env": {
-    "DATABASE_PASSWORD": "@database_password",
-    "DATABASE_URL": "@database_url",
-    "DIRECT_URL": "@direct_url",
-    "GOOGLE_API_KEY": "@google_api_key",
-    "NEXT_PUBLIC_GOOGLE_API_KEY": "@next_public_google_api_key",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@next_public_supabase_anon_key",
-    "NEXT_PUBLIC_SUPABASE_URL": "@next_public_supabase_url",
-    "SONIOX_API_KEY": "@soniox_api_key",
-    "NEXT_PUBLIC_SONIOX_API_KEY": "@next_public_soniox_api_key",
-    "SUPABASE_PROJECT_ID": "@supabase_project_id",
-    "SUPABASE_SERVICE_ROLE": "@supabase_service_role",
-    "OPENAI_API_KEY": "@openai_api_key"
-  },
   "headers": [
     {
       "source": "/api/(.*)",
