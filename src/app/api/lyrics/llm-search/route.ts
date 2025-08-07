@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
+import { scoreLyrics, normalizeLyrics, detectDominantLang } from '../quality';
 
 // Search with Claude
 async function searchWithClaude(artist: string, title: string): Promise<any | null> {
@@ -391,12 +392,15 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // Sort by confidence and length
-    validResults.sort((a, b) => {
-      const confDiff = (b.confidence || 0) - (a.confidence || 0);
-      if (Math.abs(confDiff) > 0.1) return confDiff;
-      return b.lyrics.length - a.lyrics.length;
+    // Heuristic quality scoring and normalization
+    const expected = detectDominantLang(`${artist} ${title}`);
+    validResults.forEach(r => {
+      r.lyrics = normalizeLyrics(String(r.lyrics || ''));
+      r._quality = scoreLyrics(r.lyrics, expected as any);
+      // tighten confidence with heuristic
+      r.confidence = 0.4 * (r.confidence || 0) + 0.6 * (r._quality || 0);
     });
+    validResults.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
     
     timer.success(`Found ${validResults.length} results`);
     

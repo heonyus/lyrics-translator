@@ -1,4 +1,5 @@
 import { logger, APITimer } from '@/lib/logger';
+import { normalizeLyrics, scoreLyrics, detectDominantLang } from '../quality';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
@@ -40,7 +41,7 @@ Song lyrics:`;
     
     const directResult = await model.generateContent(directPrompt);
     const directResponse = await directResult.response;
-    const directLyrics = directResponse.text().trim();
+    const directLyrics = normalizeLyrics(directResponse.text().trim());
     
     // Check if Gemini found the lyrics
     if (directLyrics && !directLyrics.includes('LYRICS_NOT_FOUND') && directLyrics.length > 200) {
@@ -53,7 +54,7 @@ Song lyrics:`;
           source: 'gemini-direct',
           artist,
           title,
-          confidence: 0.85,
+          confidence: scoreLyrics(directLyrics, detectDominantLang(`${artist} ${title}`) as any),
           hasTimestamps: false,
           searchTime: Date.now() - (timer as any).startTime
         }

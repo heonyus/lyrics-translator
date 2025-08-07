@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
+import { scoreLyrics, normalizeLyrics, detectDominantLang } from '../quality';
 
 // Main handler
 export async function POST(request: NextRequest) {
@@ -204,7 +205,17 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // Sort results by quality
+    // Sort results by quality with heuristic scoring
+    allResults.forEach(r => {
+      if (r && r.lyrics) {
+        const exp = detectLanguage(`${artist} ${title}`);
+        r._quality = scoreLyrics(String(r.lyrics), exp as any);
+        r.lyrics = normalizeLyrics(String(r.lyrics));
+      } else {
+        r._quality = 0;
+      }
+    });
+
     allResults.sort((a, b) => {
       // Priority by source (adjusted for current working APIs)
       const sourcePriority: Record<string, number> = {
@@ -239,8 +250,8 @@ export async function POST(request: NextRequest) {
       }
       
       // Then by confidence
-      const aConf = a.confidence || a.finalScore || 0;
-      const bConf = b.confidence || b.finalScore || 0;
+      const aConf = (a._quality ?? 0) * 0.6 + (a.confidence || a.finalScore || 0) * 0.4;
+      const bConf = (b._quality ?? 0) * 0.6 + (b.confidence || b.finalScore || 0) * 0.4;
       if (Math.abs(aConf - bConf) > 0.1) {
         return bConf - aConf;
       }
