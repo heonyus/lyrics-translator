@@ -85,7 +85,14 @@ ALTERNATIVES: [alternative names]`;
       
       // Try to fetch and parse the first URL
       const firstUrl = urlMatches[0];
-      const fetchResult = await fetchAndParseWithGemini(firstUrl, artist, title);
+      if (!firstUrl) {
+        timer.fail('No valid URL string from Gemini');
+        return {
+          success: false,
+          error: 'No valid URL from Gemini suggestions'
+        };
+      }
+      const fetchResult = await fetchAndParseWithGemini(firstUrl as string, artist, title);
       
       if (fetchResult) {
         timer.success(`Found ${fetchResult.lyrics.length} chars from ${fetchResult.source}`);
