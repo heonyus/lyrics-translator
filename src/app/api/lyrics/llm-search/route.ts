@@ -23,6 +23,10 @@ const ALLOWED_HOSTS = [
   'melon.com',
   'genie.co.kr',
   'music.bugs.co.kr',
+  'blog.naver.com',
+  'm.blog.naver.com',
+  'tistory.com',
+  'kgasa.com',
   // English
   'genius.com',
   'azlyrics.com',
@@ -33,13 +37,10 @@ const ALLOWED_HOSTS = [
   // Japanese (limited)
   'uta-net.com',
   'utaten.com',
+  'j-lyric.net',
   // Backup
   'mojim.com',
   'kkbox.com'
-  , 'blog.naver.com'
-  , 'm.blog.naver.com'
-  , 'tistory.com'
-  , 'kgasa.com'
 ];
 
 function extractLyricsByHost(html: string, host: string): { ok: boolean; text?: string } {
@@ -67,11 +68,41 @@ function extractLyricsByHost(html: string, host: string): { ok: boolean; text?: 
     } else if (h === 'klyrics.net' || h === 'kgasa.com' || h === 'colorcodedlyrics.com') {
       const m = html.match(/<div[^>]*class="[^"]*(?:entry-content|post-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
       text = pick(m);
+      // strip romanization/translation blocks often marked with headings
+      text = text
+        .replace(/(^|\n)\s*(Romanization|English Translation|Translation|Lyrics Romanization)\b[\s\S]*$/i, '$1')
+        .trim();
+    } else if (h.endsWith('naver.com') && (/^blog\./.test(h) || /^m\.blog\./.test(h))) {
+      // Naver Blog: try SmartEditor (se-*) or legacy post-view containers
+      const cont = html.match(/<div[^>]*class="[^"]*se-main-container[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+        || html.match(/<div[^>]*id="postViewArea"[^>]*>([\s\S]*?)<\/div>/i)
+        || html.match(/<div[^>]*class="[^"]*post-view[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      if (cont) {
+        const inner = cont[1];
+        const blocks = Array.from(inner.matchAll(/<(?:p|div|span)[^>]*class="[^"]*(?:se-text-paragraph|se-module|se-section|se_component|se_textarea)[^"]*"[^>]*>([\s\S]*?)<\/(?:p|div|span)>/gi));
+        if (blocks.length > 0) {
+          text = blocks.map(b => extractTextFromHTML(b[1])).join('\n');
+        } else {
+          text = extractTextFromHTML(inner);
+        }
+      }
+    } else if (h.endsWith('tistory.com')) {
+      // Tistory: common containers
+      const cont = html.match(/<div[^>]*class="[^"]*(?:article|entry-content|tt_article_useless_p_margin)[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+        || html.match(/<div[^>]*id="(?:tt-body-page|content)"[^>]*>([\s\S]*?)<\/div>/i);
+      if (cont) {
+        text = extractTextFromHTML(cont[1]);
+      }
     } else if (h === 'uta-net.com') {
       const m = html.match(/<div[^>]*id="kashi_area"[^>]*>([\s\S]*?)<\/div>/i);
       text = pick(m);
     } else if (h === 'utaten.com') {
       const m = html.match(/<div[^>]*class="[^"]*lyricBody[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'j-lyric.net') {
+      // j-lyric: lyric text inside #Lyric and sometimes .lyrics
+      const m = html.match(/<div[^>]*id="Lyric"[^>]*>([\s\S]*?)<\/div>/i) ||
+                html.match(/<p[^>]*class="[^"]*lyrics[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
       text = pick(m);
     } else if (h === 'mojim.com') {
       const m = html.match(/<dd[^>]*class="[^"]*fs[^"]*"[^>]*>([\s\S]*?)<\/dd>/i);
@@ -102,7 +133,8 @@ function extractLyricsByHost(html: string, host: string): { ok: boolean; text?: 
       /Bugs\s*님이\s*등록해\s*주신\s*가사입니다\.?/g,
       /제공[:：].*$/gmi,
       /무단전재\s*및\s*배포를\s*금합니다\.?/g,
-      /Lyrics\s*provided\s*by\s*.+/gi
+      /Lyrics\s*provided\s*by\s*.+/gi,
+      /^\s*(?:CR:|Credit:?|Source:?|출처:?|Lyrics:?|Hangul:?|Romanization:?|English:?).*/gmi
     ];
     for (const rule of cleanupRules) {
       text = text.replace(rule, '').trim();
@@ -192,6 +224,9 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
   try {
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
+    const OPENAI_MODEL_FALLBACK = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4.1';
+    const openaiModels = [OPENAI_MODEL, OPENAI_MODEL_FALLBACK, 'gpt-4o', 'gpt-4o-mini'];
+    let currentOpenAIModel = openaiModels[0];
 
     // Perplexity-backed web search for candidate URLs
     async function searchWebForTool(artistArg: string, titleArg: string) {
@@ -270,6 +305,7 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
           '- Goal: return ONLY the exact original lyrics, preserving line breaks. Do not translate or paraphrase.',
           '- If unknown or blocked, output hasLyrics=false.',
           `- Language hint: ${expectedLang}`,
+          '- If a site rejects bot traffic (blocked/empty HTML), you MUST try alternative allowed hosts (e.g., for ko: kgasa.com, blog.naver.com, tistory.com; for ja: uta-net.com, utaten.com, j-lyric.net).',
           '- Final answer MUST be strict JSON: { "artist": "...", "title": "...", "lyrics": "...", "language": "ko|en|ja|...", "hasLyrics": true|false }',
           '- Never include code fences or commentary in final answer.',
           '- Validate that lyrics contain multiple lines and >200 chars; otherwise set hasLyrics=false.',
@@ -360,7 +396,7 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: OPENAI_MODEL,
+          model: currentOpenAIModel,
           messages,
           tools,
           tool_choice: 'auto',
@@ -371,6 +407,21 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
       });
 
       if (!resp.ok) {
+        // On model errors, switch to fallback model and retry this step
+        if ([400, 404, 422].includes(resp.status)) {
+          const idx = openaiModels.indexOf(currentOpenAIModel);
+          if (idx >= 0 && idx < openaiModels.length - 1) {
+            currentOpenAIModel = openaiModels[idx + 1];
+            await new Promise(r => setTimeout(r, 250));
+            step--; // retry same step with fallback model
+            continue;
+          }
+        }
+        if (resp.status === 429) {
+          await new Promise(r => setTimeout(r, 600));
+          step--;
+          continue;
+        }
         timer.fail(`HTTP ${resp.status}`);
         return null;
       }
@@ -445,6 +496,51 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
   }
 }
 
+// Resolve fuzzy user input (phonetic/translated titles) to canonical artist/title
+async function resolveCanonical(artist: string, title: string): Promise<{ artist: string; title: string } | null> {
+  try {
+    const { getSecret } = await import('@/lib/secure-secrets');
+    const PPLX_KEY = (await getSecret('perplexity')) || process.env.PERPLEXITY_API_KEY;
+    if (!PPLX_KEY) return null;
+    const langHint = detectDominantLang(`${artist} ${title}`);
+    // Only resolve for non-ASCII or when likely ko/ja to save cost
+    if (!/[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(`${artist}${title}`) && langHint === 'en') {
+      return null;
+    }
+    const prompt = [
+      'Normalize the following music query to canonical artist and track title.',
+      'Prefer official English or romaji for the title; also consider the original script if that is canonical.',
+      'Respond in strict JSON with fields: {"artist":"...","title":"..."}.',
+      `Query artist: ${artist}`,
+      `Query title: ${title}`,
+      'If already canonical, return as-is.'
+    ].join('\n');
+    const resp = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${PPLX_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.PERPLEXITY_MODEL || 'gpt-4.1',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.0,
+        max_tokens: 200,
+        response_format: { type: 'json_object' }
+      })
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed?.artist && parsed?.title) {
+        return { artist: String(parsed.artist), title: String(parsed.title) };
+      }
+    } catch {}
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // Search with Claude
 async function searchWithClaude(artist: string, title: string): Promise<any | null> {
   const { getSecret } = await import('@/lib/secure-secrets');
@@ -459,6 +555,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
   try {
     const expectedLang = detectDominantLang(`${artist} ${title}`) || 'unknown';
     const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4.1';
+    const CLAUDE_FALLBACK = process.env.CLAUDE_MODEL_FALLBACK || 'claude-3-5-haiku-20241022';
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -484,35 +581,27 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
     });
     
     if (!response.ok) {
-      // Basic retry for rate limit
-      if (response.status === 429) {
+      // Retry with Claude fallback on 4xx and rate-limit backoff
+      if (response.status === 429 || response.status === 400) {
         await new Promise(r => setTimeout(r, 600));
-        const { getSecret: getSecretOpenAI } = await import('@/lib/secure-secrets');
-        const OPENAI_API_KEY = (await getSecretOpenAI('openai')) || process.env.OPENAI_API_KEY;
-        const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
-        const retry = await fetch('https://api.openai.com/v1/chat/completions', {
+        const retryClaude = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'x-api-key': CLAUDE_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
           body: JSON.stringify({
-            model: OPENAI_MODEL,
-            messages: [
-              { role: 'system', content: 'You return only strict JSON. If unknown, set hasLyrics=false. Never invent lyrics.' },
-              { role: 'user', content: `Return exact original lyrics for "${title}" by "${artist}". No translation, preserve line breaks. Language hint: ${expectedLang}.\n\nJSON ONLY:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "full lyrics with \\n breaks",\n  "language": "ko|en|ja|...",\n  "hasLyrics": true|false\n }` }
-            ],
-            temperature: 0.0,
+            model: CLAUDE_FALLBACK,
             max_tokens: 6000,
-            response_format: { type: 'json_object' }
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: `Return strict JSON lyrics for "${title}" by "${artist}"; no fabrication; preserve line breaks; language hint: ${expectedLang}.\nFields: artist,title,lyrics,language,hasLyrics.` }]}
+            ]
           })
         });
-        if (!retry.ok) {
-          timer.fail(`HTTP ${retry.status}`);
+        if (!retryClaude.ok) {
+          timer.fail(`HTTP ${retryClaude.status}`);
           return null;
         }
-        const retryData = await retry.json();
-        const retryParsed = JSON.parse(retryData.choices?.[0]?.message?.content || '{}');
+        const retryData = await retryClaude.json();
+        const retryText = retryData.content?.[0]?.text || '{}';
+        const retryParsed = JSON.parse(retryText);
         if (retryParsed.hasLyrics && retryParsed.lyrics) {
           timer.success(`Found lyrics: ${retryParsed.lyrics.length} chars (retry)`);
           return { ...retryParsed, source: 'gpt', confidence: 0.88 };
@@ -793,7 +882,26 @@ export async function POST(request: NextRequest) {
   const timer = new APITimer('LLM Search');
   
   try {
-    const { artist, title } = await request.json();
+    let { artist, title } = await request.json();
+    // Heuristic alias normalization (Korean → canonical) for better provider routing
+    function normalizeAliases(a: string, t: string) {
+      let na = a || '';
+      let nt = t || '';
+      if (/원오크락|원오케이락/i.test(na)) na = 'ONE OK ROCK';
+      if (/왓에발유얼|왓에벌유얼|왓에버유얼|왓에버 유어|왓 에버 유어|왓에버유아|웨러에버유어|웨어에버유어/i.test(nt)) nt = 'Wherever you are';
+      return { na, nt };
+    }
+    const norm = normalizeAliases(String(artist || ''), String(title || ''));
+    artist = norm.na;
+    title = norm.nt;
+    // Canonical resolver (non-hardcoded) for fuzzy inputs like '호시노겐 푸딩' → '星野源 - くだらないの中に' (example)
+    try {
+      const canonical = await resolveCanonical(artist, title);
+      if (canonical?.artist && canonical?.title) {
+        artist = canonical.artist;
+        title = canonical.title;
+      }
+    } catch {}
     
     if (!artist || !title) {
       return NextResponse.json(

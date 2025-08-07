@@ -46,9 +46,9 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
     });
     
     if (!response.ok) {
-      // retry on 429/400
+      // retry on 429/400 with fallback model and jitter
       if (response.status === 429 || response.status === 400) {
-        await new Promise(r => setTimeout(r, 600));
+        await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 400)));
         const retry = await fetch('https://api.perplexity.ai/chat/completions', {
           method: 'POST',
           headers: {
@@ -56,7 +56,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'claude-4.0-sonnet',
+            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'sonar-pro',
             messages: [
               { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: ${providers.join(', ')}. Exclude search pages.` }
             ],

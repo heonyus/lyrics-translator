@@ -20,7 +20,7 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: process.env.CLAUDE_MODEL || 'claude-opus-4.1',
         max_tokens: 4000,
         messages: [
           {
@@ -92,7 +92,7 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: process.env.OPENAI_MODEL || 'gpt-5',
         messages: [
           {
             role: 'system',
@@ -110,6 +110,36 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
     });
     
     if (!response.ok) {
+      // fallback model backoff
+      if (response.status === 429 || response.status === 400) {
+        await new Promise(r => setTimeout(r, 600));
+        const retry = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL_FALLBACK || 'gpt-4.1',
+            messages: [
+              { role: 'system', content: 'Find complete song lyrics. Return strict JSON.' },
+              { role: 'user', content: `Find lyrics for "${title}" by "${artist}"` }
+            ],
+            temperature: 0.1,
+            max_tokens: 4000,
+            response_format: { type: 'json_object' }
+          })
+        });
+        if (!retry.ok) {
+          timer.fail(`HTTP ${retry.status}`);
+          return null;
+        }
+        const retryData = await retry.json();
+        const retryParsed = JSON.parse(retryData.choices?.[0]?.message?.content || '{}');
+        if (retryParsed.hasLyrics && retryParsed.lyrics) {
+          timer.success(`Found lyrics (${retryParsed.lyrics.length} chars)`);
+          return retryParsed;
+        }
+        timer.fail('No lyrics found');
+        return null;
+      }
       timer.fail(`HTTP ${response.status}`);
       return null;
     }
