@@ -247,7 +247,7 @@ Use the Chain of Thought process above to find the exact lyrics.`;
         model: 'sonar',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: fewShotExamples },
+          // { role: 'user', content: fewShotExamples }, // fewShotExamples is defined later, remove this line
           { role: 'assistant', content: 'I understand. I will return only the exact lyrics without any additional text.' },
           { role: 'user', content: userPrompt }
         ],
