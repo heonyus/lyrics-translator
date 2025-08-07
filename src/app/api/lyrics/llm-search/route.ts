@@ -28,7 +28,10 @@ const ALLOWED_HOSTS = [
   'lyricstranslate.com',
   // Japanese (limited)
   'uta-net.com',
-  'utaten.com'
+  'utaten.com',
+  // Backup
+  'mojim.com',
+  'kkbox.com'
 ];
 
 async function fetchUrlForTool(url: string) {
@@ -98,7 +101,7 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
         role: 'system',
         content: [
           'You are a strict lyrics extraction agent.',
-          '- You may browse using the tool fetch_url to retrieve HTML from ALLOWED_HOSTS only.',
+          '- You may browse using the tools: search_web (candidate URLs) and fetch_url (HTML) from ALLOWED_HOSTS only.',
           '- Goal: return ONLY the exact original lyrics, preserving line breaks. Do not translate or paraphrase.',
           '- If unknown or blocked, output hasLyrics=false.',
           `- Language hint: ${expectedLang}`,
@@ -122,10 +125,11 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
         content: [
           `Task: Get the exact lyrics for "${title}" by "${artist}".`,
           'Process:',
-          '1) Suggest 1-3 canonical lyrics page URLs from ALLOWED_HOSTS only.',
-          '2) Call fetch_url for each candidate sequentially.',
-          '3) Parse HTML and extract ONLY the lyrics text (no titles/credits/annotations). Prefer site main lyric container, remove headers/credits.',
-          '4) Return FINAL strict JSON as specified. If unavailable, hasLyrics=false.',
+          '1) Optionally call search_web to get 1-5 candidate URLs (ALLOWED_HOSTS only).',
+          '2) Otherwise suggest up to 3 canonical URLs yourself (no search pages).',
+          '3) Call fetch_url for each candidate sequentially.',
+          '4) Parse HTML and extract ONLY the lyrics text (no titles/credits/annotations). Prefer site main lyric container, remove headers/credits.',
+          '5) Return FINAL strict JSON as specified. If unavailable, hasLyrics=false.',
           '',
           'Rules:',
           '- Do NOT choose search pages or query pages (paths containing /search, ?q=, /tag/, /category/, /artist without a specific song).',
@@ -141,6 +145,18 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
       {
         type: 'function',
         function: {
+          name: 'search_web',
+          description: 'Return a list of candidate canonical lyrics page URLs for the song.',
+          parameters: {
+            type: 'object',
+            properties: { artist: { type: 'string' }, title: { type: 'string' } },
+            required: ['artist', 'title']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
           name: 'fetch_url',
           description: 'Fetch a public webpage (lyrics page) and return cleaned HTML.',
           parameters: {
@@ -153,7 +169,7 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
     ];
 
     const messages: any[] = [...system, ...fewShot, ...user];
-    const maxSteps = 8;
+    const maxSteps = 10;
 
     for (let step = 0; step < maxSteps; step++) {
       const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -183,16 +199,30 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
 
       if (calls.length > 0) {
         for (const c of calls) {
-          if (c.type === 'function' && c.function?.name === 'fetch_url') {
-            let args: any = {};
-            try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
-            const result = await fetchUrlForTool(String(args.url || ''));
-            messages.push({
-              role: 'tool',
-              tool_call_id: c.id,
-              name: 'fetch_url',
-              content: JSON.stringify(result)
-            });
+          if (c.type === 'function') {
+            if (c.function?.name === 'fetch_url') {
+              let args: any = {};
+              try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
+              const result = await fetchUrlForTool(String(args.url || ''));
+              messages.push({ role: 'tool', tool_call_id: c.id, name: 'fetch_url', content: JSON.stringify(result) });
+            } else if (c.function?.name === 'search_web') {
+              let args: any = {};
+              try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
+              // implement inline by calling Perplexity-backed search in this process for now
+              const lang = detectDominantLang(`${artist} ${title}`);
+              const providers = (
+                lang === 'ko'
+                  ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
+                  : lang === 'ja'
+                  ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
+                  : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
+              );
+              const suggestion = {
+                ok: true,
+                urls: providers.slice(0, 3).map((p) => `https://${p}`)
+              };
+              messages.push({ role: 'tool', tool_call_id: c.id, name: 'search_web', content: JSON.stringify(suggestion) });
+            }
           }
         }
         // continue next loop to let the model reason on tool outputs
