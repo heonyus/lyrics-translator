@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger, APITimer } from '@/lib/logger';
+import { isGroqAvailable, reportGroq429, scheduleGroq } from '@/lib/groq-scheduler';
 
 // In-process Groq rate limiter to mitigate HTTP 429
 let GROQ_IN_FLIGHT = 0;
@@ -84,16 +85,14 @@ export async function POST(request: NextRequest) {
     const hasGroq = !!GROQ_API_KEY;
     const hasGoogle = !!GOOGLE_API_KEY;
     
-    // Try Groq first (if available and not pronounce task)
+    // Try Groq first (if available, not pronounce, and not cooling down)
     try {
-      if (!hasGroq || isPronounce) throw new Error('Skip Groq');
+      if (!hasGroq || isPronounce || !isGroqAvailable()) throw new Error('Skip Groq');
       logger.api('Groq Translate', 'start', `${isPronounce ? 'Pronounce' : 'Translate'} Target=${targetLang} Lines=${lines.length}`);
-      await acquireGroqSlot();
       let data: any = null;
-      try {
-        const MAX_ATTEMPTS = 3;
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      const MAX_ATTEMPTS = 3;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const response = await scheduleGroq(() => fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${GROQ_API_KEY}`,
@@ -123,25 +122,21 @@ export async function POST(request: NextRequest) {
               temperature: 0.3,
               max_tokens: 2000
             })
-          });
-
-          if (!response.ok) {
-            logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
-            if (response.status === 429 && attempt < MAX_ATTEMPTS - 1) {
-              const delay = 400 * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
-              await new Promise(r => setTimeout(r, delay));
-              continue;
-            }
-            throw new Error(`Groq API error: ${response.status}`);
+          }));
+        if (!response.ok) {
+          logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
+          if (response.status === 429) reportGroq429();
+          if ((response.status === 429 || response.status === 503) && attempt < MAX_ATTEMPTS - 1) {
+            const delay = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
           }
-
-          data = await response.json();
-          break;
+          throw new Error(`Groq API error: ${response.status}`);
         }
-        if (!data) throw new Error('Groq API failed after retries');
-      } finally {
-        releaseGroqSlot();
+        data = await response.json();
+        break;
       }
+      if (!data) throw new Error('Groq API failed after retries');
       const translationText = data.choices[0]?.message?.content?.trim() || '';
 
       // Parse the numbered translations
