@@ -1,7 +1,8 @@
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const net = require('net');
 
-const PORT = process.env.WEBSOCKET_PORT || 3005;
+const DESIRED_PORT = parseInt(process.env.WEBSOCKET_PORT, 10) || 3005;
 
 // Create HTTP server
 const httpServer = createServer();
@@ -258,11 +259,41 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
-httpServer.listen(PORT, () => {
-  console.log(`🚀 WebSocket server running on port ${PORT}`);
-  console.log(`📡 Accepting connections from ${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}`);
-});
+// Probe for a free port starting from DESIRED_PORT to DESIRED_PORT+20
+function findAvailablePort(startPort, maxOffset = 20) {
+  return new Promise((resolve) => {
+    const tryPort = (port, offset) => {
+      const tester = net.createServer()
+        .once('error', (err) => {
+          if (err && err.code === 'EADDRINUSE' && offset < maxOffset) {
+            tryPort(port + 1, offset + 1);
+          } else {
+            // fallback to OS-assigned random port
+            resolve(0);
+          }
+        })
+        .once('listening', () => {
+          tester.close(() => resolve(port));
+        })
+        .listen(port, '0.0.0.0');
+    };
+    tryPort(startPort, 0);
+  });
+}
+
+(async () => {
+  const chosen = await findAvailablePort(DESIRED_PORT, 20);
+  const finalPort = chosen || 0; // 0 lets OS choose a free ephemeral port
+  httpServer.listen(finalPort, () => {
+    const address = httpServer.address();
+    const effectivePort = typeof address === 'object' && address ? address.port : finalPort;
+    if (effectivePort !== DESIRED_PORT) {
+      console.log(`⚠ WebSocket desired port ${DESIRED_PORT} unavailable. Using ${effectivePort} instead.`);
+    }
+    console.log(`🚀 WebSocket server running on port ${effectivePort}`);
+    console.log(`📡 Accepting connections from ${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}`);
+  });
+})();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
