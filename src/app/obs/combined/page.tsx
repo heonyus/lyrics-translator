@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import '../obs.css';
 
-export default function CombinedOBSPage() {
+function CombinedOBSContent() {
   const searchParams = useSearchParams();
   
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
@@ -178,5 +178,13 @@ export default function CombinedOBSPage() {
       </div>
       </div>
     </div>
+  );
+}
+
+export default function CombinedOBSPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <CombinedOBSContent />
+    </Suspense>
   );
 }

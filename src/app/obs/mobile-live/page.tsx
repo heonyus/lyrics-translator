@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AlbumCard from '@/components/mobile-live/AlbumCard';
 import LyricsDisplay from '@/components/mobile-live/LyricsDisplay';
@@ -18,7 +18,7 @@ interface AlbumInfo {
   coverUrl?: string;
 }
 
-export default function MobileLiveOverlay() {
+function MobileLiveOverlayContent() {
   const searchParams = useSearchParams();
   
   // Fullscreen state
@@ -308,5 +308,13 @@ export default function MobileLiveOverlay() {
       </div>
     </div>
     </>
+  );
+}
+
+export default function MobileLiveOverlay() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <MobileLiveOverlayContent />
+    </Suspense>
   );
 }
