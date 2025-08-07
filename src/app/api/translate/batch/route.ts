@@ -94,8 +94,8 @@ ${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
       // Parse the numbered translations
       const translations = translationText
         .split('\n')
-        .map(line => line.replace(/^\d+\.\s*/, '').trim())
-        .filter(line => line.length > 0);
+        .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
+        .filter((line: string) => line.length > 0);
 
       // Ensure we have the same number of translations as input lines
       while (translations.length < lines.length) {

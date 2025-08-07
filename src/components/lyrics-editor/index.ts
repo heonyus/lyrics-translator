@@ -1,1 +1,0 @@
-export { LyricsTimingEditor } from './LyricsTimingEditor';

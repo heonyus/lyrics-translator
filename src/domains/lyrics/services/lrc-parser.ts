@@ -1,1 +1,0 @@
-export { LRCParser } from '../parser/lrc-parser';

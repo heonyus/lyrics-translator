@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Remove duplicates
-    const uniqueValues = [...new Set(data?.map(item => item[field]).filter(Boolean))];
+    const uniqueValues = [...new Set(data?.map((item: any) => item[field]).filter(Boolean))];
     
     return NextResponse.json({
       success: true,
