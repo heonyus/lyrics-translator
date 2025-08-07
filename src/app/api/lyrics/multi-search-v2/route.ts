@@ -33,16 +33,54 @@ export async function POST(request: NextRequest) {
     // Parse search parameters
     let searchArtist = artist;
     let searchTitle = title;
+    let parseSource = 'direct';
     
+    // If no direct artist/title, try smart parsing with Groq
     if (!searchArtist || !searchTitle) {
       if (query) {
-        const parts = query.split(' - ');
-        if (parts.length >= 2) {
-          searchArtist = parts[0].trim();
-          searchTitle = parts.slice(1).join(' ').trim();
-        } else {
-          searchArtist = query;
-          searchTitle = query;
+        logger.info(`🤖 Using Groq to parse query: "${query}"`);
+        
+        try {
+          // Try smart parsing with Groq API
+          const parseResponse = await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/parse-query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+          });
+          
+          if (parseResponse.ok) {
+            const parseData = await parseResponse.json();
+            if (parseData.success && parseData.parsed) {
+              const parsed = parseData.parsed;
+              searchArtist = parsed.artist;
+              searchTitle = parsed.title;
+              parseSource = parseData.source || 'groq';
+              
+              logger.success(`📝 Parsed: Artist="${searchArtist}", Title="${searchTitle}" (${parseSource})`);
+            }
+          }
+        } catch (parseError) {
+          logger.warning('Groq parsing failed, using fallback');
+        }
+        
+        // Fallback to simple parsing if Groq fails
+        if (!searchArtist || !searchTitle) {
+          const parts = query.split(' - ');
+          if (parts.length >= 2) {
+            searchArtist = parts[0].trim();
+            searchTitle = parts.slice(1).join(' ').trim();
+          } else {
+            // Try to be smart about single string
+            const words = query.trim().split(' ');
+            if (words.length >= 2) {
+              searchArtist = words[0];
+              searchTitle = words.slice(1).join(' ');
+            } else {
+              searchArtist = query;
+              searchTitle = query;
+            }
+          }
+          parseSource = 'fallback';
         }
       }
     }
@@ -183,7 +221,15 @@ export async function POST(request: NextRequest) {
       totalSources: successfulResults.length,
       bestResult: successfulResults[0],
       language,
-      searchTime: totalTime
+      searchTime: totalTime,
+      parsing: {
+        source: parseSource,
+        original: query || `${artist} - ${title}`,
+        parsed: {
+          artist: searchArtist,
+          title: searchTitle
+        }
+      }
     });
     
   } catch (error) {
