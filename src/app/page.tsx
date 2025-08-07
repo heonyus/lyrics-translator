@@ -4,16 +4,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { toast, Toaster } from 'sonner';
 import { SearchIcon, PlayIcon, PauseIcon, ResetIcon, MoonIcon, SunIcon, MusicIcon, MicIcon, NextIcon, LoaderIcon } from '@/components/Icons';
 
-// 인기 검색어
-const popularSearches = [
-  '샘킴 Make Up',
+// 기본 인기 검색어 (API 로딩 전 표시)
+const defaultPopularSearches = [
   '아이유 좋은날',
-  'YOASOBI 夜に駆ける',
   'NewJeans Ditto',
-  'BTS Dynamite',
+  'YOASOBI 夜に駆ける',
   '임영웅 사랑은 늘 도망가',
-  'Charlie Puth Left and Right',
-  'Ed Sheeran Perfect'
+  'BTS Dynamite'
 ];
 
 // 검색 결과 타입
@@ -33,6 +30,7 @@ export default function Home() {
   const [currentStep, setCurrentStep] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [popularSearches, setPopularSearches] = useState<string[]>(defaultPopularSearches);
   
   // 가사 상태
   const [lyrics, setLyrics] = useState('');
@@ -68,12 +66,22 @@ export default function Home() {
     }
   }, []);
   
-  // 최근 검색 불러오기
+  // 최근 검색 및 인기 검색어 불러오기
   useEffect(() => {
     const saved = localStorage.getItem('recentSearches');
     if (saved) {
       setRecentSearches(JSON.parse(saved));
     }
+    
+    // 인기 검색어 API 호출
+    fetch('/api/popular-searches')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.popularSearches) {
+          setPopularSearches(data.popularSearches.slice(0, 5));
+        }
+      })
+      .catch(console.error);
   }, []);
   
   // 다크모드 토글
@@ -137,6 +145,13 @@ export default function Home() {
     const newRecent = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(newRecent);
     localStorage.setItem('recentSearches', JSON.stringify(newRecent));
+    
+    // 인기 검색어 업데이트 (DB에 기록)
+    fetch('/api/popular-searches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artist, title })
+    }).catch(console.error);
     
     setIsSearching(true);
     setCurrentStep(0);
@@ -544,40 +559,29 @@ export default function Home() {
           }`}>
             {/* 글래스 하이라이트 */}
             <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-transparent pointer-events-none" />
-            {/* iOS 26 스타일 탭 헤더 */}
-            <div className={`relative flex backdrop-blur-xl border-b ${
-              isDark ? 'border-white/10 bg-black/10' : 'border-black/5 bg-white/20'
+            {/* 탭 헤더 */}
+            <div className={`flex border-b ${
+              isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-gray-50'
             }`}>
               <button
                 onClick={() => setActiveTab('preview')}
-                className={`relative flex-1 px-6 py-4 font-medium transition-all duration-300 ${
+                className={`flex-1 px-4 py-3 font-medium transition-colors ${
                   activeTab === 'preview'
-                    ? isDark 
-                      ? 'text-white'
-                      : 'text-gray-900'
+                    ? 'text-purple-600 border-b-2 border-purple-600'
                     : isDark
                       ? 'text-gray-400 hover:text-gray-200'
                       : 'text-gray-600 hover:text-gray-800'
                 }`}
               >
-                {activeTab === 'preview' && (
-                  <div className={`absolute inset-0 rounded-t-xl ${
-                    isDark
-                      ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 border-b-2 border-purple-400'
-                      : 'bg-gradient-to-r from-purple-500/10 to-pink-500/10 border-b-2 border-purple-600'
-                  }`} />
-                )}
-                <span className="relative">미리보기</span>
+                미리보기
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
-                className={`flex-1 px-6 py-4 font-medium transition-colors ${
+                className={`flex-1 px-4 py-3 font-medium transition-colors ${
                   activeTab === 'settings'
-                    ? isDark 
-                      ? 'bg-purple-500/20 text-purple-400 border-b-2 border-purple-400'
-                      : 'bg-purple-50 text-purple-600 border-b-2 border-purple-600'
+                    ? 'text-purple-600 border-b-2 border-purple-600'
                     : isDark
-                      ? 'text-gray-400 hover:text-gray-300'
+                      ? 'text-gray-400 hover:text-gray-200'
                       : 'text-gray-600 hover:text-gray-800'
                 }`}
               >
@@ -585,13 +589,11 @@ export default function Home() {
               </button>
               <button
                 onClick={() => setActiveTab('shortcuts')}
-                className={`flex-1 px-6 py-4 font-medium transition-colors ${
+                className={`flex-1 px-4 py-3 font-medium transition-colors ${
                   activeTab === 'shortcuts'
-                    ? isDark 
-                      ? 'bg-purple-500/20 text-purple-400 border-b-2 border-purple-400'
-                      : 'bg-purple-50 text-purple-600 border-b-2 border-purple-600'
+                    ? 'text-purple-600 border-b-2 border-purple-600'
                     : isDark
-                      ? 'text-gray-400 hover:text-gray-300'
+                      ? 'text-gray-400 hover:text-gray-200'
                       : 'text-gray-600 hover:text-gray-800'
                 }`}
               >
