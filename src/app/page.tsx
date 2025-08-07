@@ -7,6 +7,7 @@ import LanguageSelector from '@/components/LanguageSelector';
 import { DEFAULT_SEARCH_PROMPT } from '@/lib/constants/defaultPrompt';
 import EnhancedSearchBar from '@/components/EnhancedSearchBar';
 import SimpleLyricsEditor from '@/components/SimpleLyricsEditor';
+import LyricsResultSelector from '@/components/LyricsResultSelector';
 
 interface Song {
   id: string;
@@ -64,6 +65,8 @@ export default function HomePage() {
   const [editedLyrics, setEditedLyrics] = useState<string>('');
   const [showEnhancedSearch, setShowEnhancedSearch] = useState(false);
   const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showResultSelector, setShowResultSelector] = useState(false);
   
   // Translation state
   const [translations, setTranslations] = useState<Translation>({});
@@ -168,7 +171,8 @@ export default function HomePage() {
     setIsSearching(true);
     
     try {
-      const response = await fetch('/api/lyrics/multi-search', {
+      // Use the new multi-search-v2 API
+      const response = await fetch('/api/lyrics/multi-search-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -179,22 +183,38 @@ export default function HomePage() {
       
       const data = await response.json();
       if (data.success && data.results && data.results.length > 0) {
-        const result = data.bestResult || data.results[0];
-        const song: Song = {
-          id: Date.now().toString(),
-          artist: result.artist,
-          title: result.title,
-          lyrics: result.lyrics,
-          metadata: result.metadata
-        };
+        // Store all results
+        setSearchResults(data.results);
         
-        setSelectedSong(song);
-        setEditedLyrics(song.lyrics);
-        setLyricsLines(song.lyrics.split('\n').filter(line => line.trim()));
-        if (data.fromCache) {
-          toast.success('📚 DB에서 가사를 찾았습니다!');
+        // If only one result or from cache, use it directly
+        if (data.results.length === 1 || data.fromCache) {
+          const result = data.bestResult || data.results[0];
+          const song: Song = {
+            id: Date.now().toString(),
+            artist: result.artist,
+            title: result.title,
+            lyrics: result.syncedLyrics || result.lyrics,
+            metadata: {
+              ...result.metadata,
+              hasSyncedLyrics: !!result.syncedLyrics,
+              source: result.source,
+              confidence: result.confidence
+            }
+          };
+          
+          setSelectedSong(song);
+          setEditedLyrics(song.lyrics);
+          setLyricsLines(song.lyrics.split('\n').filter(line => line.trim()));
+          
+          if (data.fromCache) {
+            toast.success('📚 DB에서 가사를 찾았습니다!');
+          } else {
+            toast.success(`🎵 ${result.source}에서 가사를 찾았습니다! ${result.syncedLyrics ? '(LRC 타이밍 포함)' : ''}`);
+          }
         } else {
-          toast.success(`🎵 ${result.source}에서 가사를 찾았습니다!`);
+          // Show result selector for multiple results
+          setShowResultSelector(true);
+          toast.info(`${data.results.length}개의 결과를 찾았습니다. 최적의 결과를 선택하세요.`);
         }
       } else {
         toast.error('가사를 찾을 수 없습니다');
@@ -386,6 +406,30 @@ export default function HomePage() {
 
   const isFavorite = selectedSong && favorites.some(f => f.artist === selectedSong.artist && f.title === selectedSong.title);
 
+  // Handle result selection from LyricsResultSelector
+  const handleResultSelect = (result: any) => {
+    const song: Song = {
+      id: Date.now().toString(),
+      artist: result.artist,
+      title: result.title,
+      lyrics: result.syncedLyrics || result.lyrics,
+      metadata: {
+        ...result.metadata,
+        hasSyncedLyrics: !!result.syncedLyrics,
+        source: result.source,
+        confidence: result.confidence,
+        language: result.language
+      }
+    };
+    
+    setSelectedSong(song);
+    setEditedLyrics(song.lyrics);
+    setLyricsLines(song.lyrics.split('\n').filter(line => line.trim()));
+    setShowResultSelector(false);
+    
+    toast.success(`🎵 ${result.source}에서 가사를 선택했습니다! ${result.syncedLyrics ? '(LRC 타이밍 포함)' : ''}`);
+  };
+
   return (
     <div className={`min-h-screen transition-colors ${
       isDarkMode 
@@ -394,6 +438,20 @@ export default function HomePage() {
     }`}>
       <Toaster position="top-center" theme={isDarkMode ? 'dark' : 'light'} />
       
+      {/* Result Selector Modal */}
+      {showResultSelector && searchResults.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <LyricsResultSelector
+            results={searchResults}
+            onSelect={handleResultSelect}
+            onCancel={() => {
+              setShowResultSelector(false);
+              setSearchResults([]);
+            }}
+          />
+        </div>
+      )}
+
       {/* Header */}
       <div className={`${
         isDarkMode 
