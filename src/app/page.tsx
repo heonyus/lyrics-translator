@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Settings, Music, Globe, Clock, Star, Moon, Sun, Edit2, Send, Loader2, Mic, RefreshCw, Copy, ExternalLink } from 'lucide-react';
+import { Search, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Settings, Music, Globe, Clock, Star, Moon, Sun, Edit2, Send, Loader2, Mic, RefreshCw, Copy, ExternalLink, Terminal } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import LanguageSelector from '@/components/LanguageSelector';
 import { DEFAULT_SEARCH_PROMPT } from '@/lib/constants/defaultPrompt';
 import EnhancedSearchBar from '@/components/EnhancedSearchBar';
 import SimpleLyricsEditor from '@/components/SimpleLyricsEditor';
 import LyricsResultSelector from '@/components/LyricsResultSelector';
+import LogViewer from '@/components/LogViewer';
 
 interface Song {
   id: string;
@@ -94,6 +95,9 @@ export default function HomePage() {
   
   // Playlist
   const [favorites, setFavorites] = useState<Song[]>([]);
+  
+  // Log viewer state
+  const [showLogViewer, setShowLogViewer] = useState(false);
 
   // Load preferences on mount
   useEffect(() => {
@@ -476,6 +480,19 @@ export default function HomePage() {
           )}
           
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowLogViewer(!showLogViewer)}
+              className={`p-2 rounded-lg transition-colors ${
+                showLogViewer
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : isDarkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+              }`}
+              title="Toggle Log Viewer"
+            >
+              <Terminal className="w-5 h-5" />
+            </button>
             <button
               onClick={toggleDarkMode}
               className={`p-2 rounded-lg transition-colors ${
@@ -1168,6 +1185,17 @@ export default function HomePage() {
         }`}>
           단축키: Space(다음) • Shift+Space(이전) • ←→(이동) • R(리셋)
         </div>
+        
+        {/* Log Viewer */}
+        {showLogViewer && (
+          <div className="mt-6">
+            <LogViewer 
+              className="animate-in fade-in slide-in-from-bottom-2"
+              maxEntries={200}
+              autoScroll={true}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

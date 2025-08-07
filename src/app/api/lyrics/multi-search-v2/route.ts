@@ -54,11 +54,13 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Start session logging
+    logger.startSession(`${searchArtist} - ${searchTitle}`);
     logger.search(`🎯 Multi-Search v2: "${searchArtist} - ${searchTitle}"`);
     
     // Detect language for optimized search
     const language = detectLanguage(`${searchArtist} ${searchTitle}`);
-    logger.info(`Detected language: ${language}`);
+    logger.language(language);
     
     // Step 1: Check database first
     const dbTimer = new APITimer('Database');
