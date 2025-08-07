@@ -75,7 +75,7 @@ export default function LoginPage() {
         
         <div className="mt-6 text-center text-gray-500 text-sm">
           <p>허가된 사용자만 접근 가능합니다</p>
-          <p className="mt-2">문의: heonyus@gmail.com</p>
+          <p className="mt-2">문의: lhe339@gmail.com</p>
         </div>
       </div>
     </div>

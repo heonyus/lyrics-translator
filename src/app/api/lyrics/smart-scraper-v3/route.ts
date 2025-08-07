@@ -20,20 +20,15 @@ export async function POST(request: NextRequest) {
         logger.info('📝 Parsing query with LLM...');
         
         try {
-          const parseResponse = await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/parse-query`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query })
-          });
+          // Import and call the parse-query handler directly
+          const { parseQuery } = await import('../parse-query/utils');
+          const parseResult = await parseQuery(query);
           
-          if (parseResponse.ok) {
-            const parseData = await parseResponse.json();
-            if (parseData.success && parseData.parsed) {
-              artist = parseData.parsed.artist;
-              title = parseData.parsed.title;
-              parseSource = parseData.source;
-              logger.success(`✅ Parsed with ${parseSource}: ${artist} - ${title}`);
-            }
+          if (parseResult && parseResult.parsed) {
+            artist = parseResult.parsed.artist;
+            title = parseResult.parsed.title;
+            parseSource = parseResult.source;
+            logger.success(`✅ Parsed with ${parseSource}: ${artist} - ${title}`);
           }
         } catch (error) {
           logger.warning('Failed to parse with LLM, using fallback');
@@ -70,28 +65,23 @@ export async function POST(request: NextRequest) {
     // Step 2: Check cache first (unless force refresh)
     if (!forceRefresh) {
       try {
-        const cacheResponse = await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: `${artist} ${title}` })
-        });
+        // Import and call the search handler directly
+        const { searchLyrics } = await import('../search/utils');
+        const cacheResult = await searchLyrics({ query: `${artist} ${title}` });
         
-        if (cacheResponse.ok) {
-          const cacheData = await cacheResponse.json();
-          if (cacheData.success && cacheData.lyrics) {
-            logger.success('✅ Found in cache');
-            return NextResponse.json({
-              success: true,
-              results: [{
-                ...cacheData.lyrics,
-                source: 'cache',
-                fromCache: true,
-                confidence: 1.0
-              }],
-              bestResult: cacheData.lyrics,
-              parseInfo: { source: parseSource, artist, title }
-            });
-          }
+        if (cacheResult && cacheResult.success && cacheResult.lyrics) {
+          logger.success('✅ Found in cache');
+          return NextResponse.json({
+            success: true,
+            results: [{
+              ...cacheResult.lyrics,
+              source: 'cache',
+              fromCache: true,
+              confidence: 1.0
+            }],
+            bestResult: cacheResult.lyrics,
+            parseInfo: { source: parseSource, artist, title }
+          });
         }
       } catch (error) {
         logger.warning('Cache check failed');
@@ -103,49 +93,39 @@ export async function POST(request: NextRequest) {
     
     // 1. LLM Direct Search (highest priority)
     searchPromises.push(
-      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/llm-search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, title })
-      }).then(r => r.ok ? r.json() : null).catch(() => null)
+      import('../llm-search/utils').then(mod => 
+        mod.llmSearch({ artist, title })
+      ).catch(() => null)
     );
     
     // 2. Search Engine (Naver/Google)
     searchPromises.push(
-      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/search-engine`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, title, engine: 'auto' })
-      }).then(r => r.ok ? r.json() : null).catch(() => null)
+      import('../search-engine/utils').then(mod => 
+        mod.searchEngine({ artist, title, engine: 'auto' })
+      ).catch(() => null)
     );
     
     // 3. Korean sites if Korean
     if (language === 'ko') {
       searchPromises.push(
-        fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/korean-scrapers`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ artist, title })
-        }).then(r => r.ok ? r.json() : null).catch(() => null)
+        import('../korean-scrapers/utils').then(mod => 
+          mod.searchKoreanSites({ artist, title })
+        ).catch(() => null)
       );
     }
     
     // 4. LRCLIB (for synced lyrics)
     searchPromises.push(
-      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/lrclib-search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, title })
-      }).then(r => r.ok ? r.json() : null).catch(() => null)
+      import('../lrclib-search/utils').then(mod => 
+        mod.searchLRCLIB({ artist, title })
+      ).catch(() => null)
     );
     
     // 5. Original smart scraper as fallback
     searchPromises.push(
-      fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/smart-scraper-v2`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, title, forceRefresh })
-      }).then(r => r.ok ? r.json() : null).catch(() => null)
+      import('../smart-scraper-v2/utils').then(mod => 
+        mod.smartScraperV2({ artist, title, forceRefresh })
+      ).catch(() => null)
     );
     
     // Execute all searches
@@ -157,10 +137,10 @@ export async function POST(request: NextRequest) {
     
     searchResults.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
-        const data = result.value;
+        const data: any = result.value;
         
         // Handle different response formats
-        if (data.success) {
+        if (data && data.success) {
           if (data.results && Array.isArray(data.results)) {
             // Multiple results
             data.results.forEach((r: any) => {
@@ -186,6 +166,14 @@ export async function POST(request: NextRequest) {
               source: data.bestResult.source || sourceNames[index],
               artist: data.bestResult.artist || artist,
               title: data.bestResult.title || title
+            });
+          } else if (data.lyrics) {
+            // Direct lyrics result
+            allResults.push({
+              ...data,
+              source: data.source || sourceNames[index],
+              artist: data.artist || artist,
+              title: data.title || title
             });
           }
         }
@@ -247,7 +235,7 @@ export async function POST(request: NextRequest) {
     // Safe summary logging
     try {
       const successfulSources = allResults.filter(r => r.confidence > 0.5).length;
-      logger.summary(searchPromises.length, successfulSources, Date.now() - timer['startTime']);
+      logger.summary(searchPromises.length, successfulSources, Date.now() - (timer as any).startTime);
     } catch (summaryError) {
       // Ignore summary error and continue
       console.log(`Found ${allResults.length} results from ${searchPromises.length} sources`);
@@ -261,31 +249,26 @@ export async function POST(request: NextRequest) {
       try {
         logger.info('🔀 Attempting to consolidate multiple results...');
         
-        const consolidateResponse = await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/consolidate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            results: allResults.slice(0, 5), // Top 5 results
-            artist,
-            title
-          })
+        // Import and call consolidate directly
+        const { consolidateLyrics } = await import('../consolidate/utils');
+        const consolidatedData = await consolidateLyrics({
+          results: allResults.slice(0, 5), // Top 5 results
+          artist,
+          title
         });
         
-        if (consolidateResponse.ok) {
-          const consolidatedData = await consolidateResponse.json();
-          if (consolidatedData.success && consolidatedData.lyrics) {
-            logger.success('✨ Successfully consolidated lyrics');
-            finalResult = {
-              ...consolidatedData,
-              artist: consolidatedData.artist || artist,
-              title: consolidatedData.title || title,
-              hasTimestamps: false
-            };
-            wasConsolidated = true;
-            
-            // Add consolidated result to the beginning
-            allResults.unshift(finalResult);
-          }
+        if (consolidatedData && consolidatedData.success && consolidatedData.lyrics) {
+          logger.success('✨ Successfully consolidated lyrics');
+          finalResult = {
+            ...consolidatedData,
+            artist: consolidatedData.artist || artist,
+            title: consolidatedData.title || title,
+            hasTimestamps: false
+          };
+          wasConsolidated = true;
+          
+          // Add consolidated result to the beginning
+          allResults.unshift(finalResult);
         }
       } catch (error) {
         logger.warning('Consolidation failed, using best individual result');
@@ -296,21 +279,19 @@ export async function POST(request: NextRequest) {
     const bestResult = finalResult;
     if (bestResult && bestResult.confidence > 0.7 && bestResult.lyrics) {
       try {
-        await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/lyrics/save`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: bestResult.title || title,
-            artist: bestResult.artist || artist,
-            lrc_content: bestResult.lyrics,
-            metadata: {
-              source: bestResult.source,
-              language,
-              confidence: bestResult.confidence,
-              hasTimestamps: bestResult.hasTimestamps || false,
-              wasConsolidated
-            }
-          })
+        // Import and call save directly
+        const { saveLyrics } = await import('../save/utils');
+        await saveLyrics({
+          title: bestResult.title || title,
+          artist: bestResult.artist || artist,
+          lrc_content: bestResult.lyrics,
+          metadata: {
+            source: bestResult.source,
+            language,
+            confidence: bestResult.confidence,
+            hasTimestamps: bestResult.hasTimestamps || false,
+            wasConsolidated
+          }
         });
         logger.success('💾 Saved to cache');
       } catch (error) {
@@ -329,7 +310,7 @@ export async function POST(request: NextRequest) {
         original: query || `${providedArtist} - ${providedTitle}`,
         parsed: { artist, title }
       },
-      searchTime: Date.now() - timer['startTime']
+      searchTime: Date.now() - (timer as any).startTime
     });
     
   } catch (error) {

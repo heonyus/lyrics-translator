@@ -125,7 +125,7 @@ export default function MobileDashboard() {
         }
       }
       
-      console.log('Searching for:', { artist, title });
+      console.log(`Searching for: ${artist} - ${title}`);
       
       // Use Smart Scraper V3 with LLM parsing
       const response = await fetch('/api/lyrics/smart-scraper-v3', {
