@@ -349,11 +349,13 @@ export default function MobileDashboard() {
   };
 
   // Translate lyrics
-  const translateLyrics = async (lines: string[], forceTranslate = false) => {
+  const translateLyrics = async (lines: string[], forceTranslate = false, langsOverride?: string[]) => {
     if (!lines.length) return;
     
+    const targetLangs = langsOverride && langsOverride.length ? langsOverride : settings.selectedLanguages;
+
     // 언어가 선택되지 않았으면 번역하지 않음
-    if (settings.selectedLanguages.length === 0 && !forceTranslate) {
+    if (targetLangs.length === 0 && !forceTranslate) {
       toast.error('번역할 언어를 선택해주세요');
       return;
     }
@@ -362,7 +364,7 @@ export default function MobileDashboard() {
     
     try {
       // 각 언어별로 병렬로 번역 요청
-      const translationPromises = settings.selectedLanguages.map(async (lang) => {
+      const translationPromises = targetLangs.map(async (lang) => {
         const response = await fetch('/api/translate/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -399,7 +401,7 @@ export default function MobileDashboard() {
       if (Object.keys(translationsObj).length > 0) {
         setTranslations(translationsObj);
         localStorage.setItem('current_translations', JSON.stringify(translationsObj));
-        localStorage.setItem('selected_languages', JSON.stringify(settings.selectedLanguages));
+        localStorage.setItem('selected_languages', JSON.stringify(targetLangs));
         localStorage.setItem('translation_enabled', 'true');
         toast.success('번역 완료!');
       } else {
@@ -1010,7 +1012,7 @@ export default function MobileDashboard() {
                             // 번역 상태 저장
                             localStorage.setItem('translation_enabled', 'true');
                             // 즉시 번역 실행
-                            translateLyrics(currentSong.lyricsLines);
+                            translateLyrics(currentSong.lyricsLines, true, newLangs);
                           }
                         }}
                         className="w-4 h-4 rounded"
