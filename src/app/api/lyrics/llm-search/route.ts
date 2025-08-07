@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
 import { scoreLyrics, normalizeLyrics, detectDominantLang } from '../quality';
+import { extractTextFromHTML, searchKoreanSites } from '../korean-scrapers/utils';
 
 function validateLyricsText(text: string): boolean {
   if (!text) return false;
@@ -19,6 +20,9 @@ const ALLOWED_HOSTS = [
   // Korean first
   'klyrics.net',
   'colorcodedlyrics.com',
+  'melon.com',
+  'genie.co.kr',
+  'music.bugs.co.kr',
   // English
   'genius.com',
   'azlyrics.com',
@@ -35,7 +39,95 @@ const ALLOWED_HOSTS = [
   , 'blog.naver.com'
   , 'm.blog.naver.com'
   , 'tistory.com'
+  , 'kgasa.com'
 ];
+
+function extractLyricsByHost(html: string, host: string): { ok: boolean; text?: string } {
+  try {
+    const h = host.replace('www.', '');
+    const pick = (m: RegExpMatchArray | null) => (m ? extractTextFromHTML(m[1]) : '');
+    let text = '';
+    if (!html) return { ok: false };
+    if (h === 'genius.com') {
+      const blocks = Array.from(html.matchAll(/<div[^>]+data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi));
+      text = blocks.map(b => extractTextFromHTML(b[1])).join('\n');
+    } else if (h === 'azlyrics.com') {
+      const cont = html.match(/<!--\s*Usage of azlyrics\.com[\s\S]*?-->([\s\S]*?)<div[^>]*class="[^"]*smt[^>]*>/i) ||
+                   html.match(/<div[^>]*class="[^\"]*col-xs-12[^\"]*text-center[^\"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      if (cont) {
+        const inner = cont[1].match(/<div[^>]*>([\s\S]*?)<\/div>/i);
+        text = extractTextFromHTML(inner ? inner[1] : cont[1]);
+      }
+    } else if (h === 'musixmatch.com') {
+      const blocks = Array.from(html.matchAll(/<(?:div|span)[^>]*class="[^"]*mxm-lyrics__content[^"]*"[^>]*>([\s\S]*?)<\/(?:div|span)>/gi));
+      text = blocks.map(b => extractTextFromHTML(b[1])).join('\n');
+    } else if (h === 'lyrics.com') {
+      const m = html.match(/<pre[^>]*id="lyric-body-text"[^>]*>([\s\S]*?)<\/pre>/i);
+      text = pick(m);
+    } else if (h === 'klyrics.net' || h === 'kgasa.com' || h === 'colorcodedlyrics.com') {
+      const m = html.match(/<div[^>]*class="[^"]*(?:entry-content|post-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'uta-net.com') {
+      const m = html.match(/<div[^>]*id="kashi_area"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'utaten.com') {
+      const m = html.match(/<div[^>]*class="[^"]*lyricBody[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'mojim.com') {
+      const m = html.match(/<dd[^>]*class="[^"]*fs[^"]*"[^>]*>([\s\S]*?)<\/dd>/i);
+      text = pick(m);
+    } else if (h === 'kkbox.com') {
+      const m = html.match(/<div[^>]*class="[^"]*lyrics[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'melon.com') {
+      const m = html.match(/<div[^>]*class="[^"]*lyric[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                html.match(/<div[^>]*id="d_video_summary"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'genie.co.kr') {
+      const m = html.match(/<pre[^>]*id="pLyrics"[^>]*>([\s\S]*?)<\/pre>/i) ||
+                html.match(/<div[^>]*class="[^"]*lyrics[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      text = pick(m);
+    } else if (h === 'music.bugs.co.kr') {
+      const m = html.match(/<div[^>]*class="[^"]*lyricsContainer[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                html.match(/<xmp[^>]*>([\s\S]*?)<\/xmp>/i);
+      text = pick(m);
+    } else {
+      // fallback: take the largest text block from body
+      const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      text = extractTextFromHTML(body ? body[1] : html);
+    }
+    text = text.trim();
+    // Remove common site footers/disclaimers
+    const cleanupRules: Array<RegExp> = [
+      /Bugs\s*님이\s*등록해\s*주신\s*가사입니다\.?/g,
+      /제공[:：].*$/gmi,
+      /무단전재\s*및\s*배포를\s*금합니다\.?/g,
+      /Lyrics\s*provided\s*by\s*.+/gi
+    ];
+    for (const rule of cleanupRules) {
+      text = text.replace(rule, '').trim();
+    }
+    if (text && text.split('\n').filter(Boolean).length >= 6 && text.length > 120) {
+      return { ok: true, text };
+    }
+    return { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function stripSiteFooters(raw: string): string {
+  if (!raw) return raw;
+  let text = raw;
+  const rules: Array<RegExp> = [
+    /Bugs\s*님이\s*등록해\s*주신\s*가사입니다\.?/g,
+    /제공[:：].*$/gmi,
+    /무단전재\s*및\s*배포를\s*금합니다\.?/g,
+    /Lyrics\s*provided\s*by\s*.+/gi
+  ];
+  for (const r of rules) text = text.replace(r, '').trim();
+  return text;
+}
 
 async function fetchUrlForTool(url: string) {
   try {
@@ -109,10 +201,22 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
         const lang = detectDominantLang(`${artistArg} ${titleArg}`);
         const providers = (
           lang === 'ko'
-            ? ['klyrics.net', 'colorcodedlyrics.com', 'genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com']
+            ? [
+                'klyrics.net',
+                'colorcodedlyrics.com',
+                'kgasa.com',
+                'blog.naver.com',
+                'm.blog.naver.com',
+                'tistory.com',
+                'kkbox.com',
+                'genius.com',
+                'azlyrics.com',
+                'lyrics.com',
+                'musixmatch.com'
+              ]
             : lang === 'ja'
-            ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com']
-            : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com']
+            ? ['uta-net.com', 'utaten.com', 'mojim.com', 'genius.com', 'lyrics.com', 'kkbox.com']
+            : ['genius.com', 'azlyrics.com', 'lyrics.com', 'musixmatch.com', 'lyricstranslate.com', 'kkbox.com']
         );
         const resp = await fetch('https://api.perplexity.ai/chat/completions', {
           method: 'POST',
@@ -154,12 +258,15 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
       }
     }
 
+    const toolHtmlCache = new Map<string, string>();
+
     const system = [
       {
         role: 'system',
         content: [
           'You are a strict lyrics extraction agent.',
           '- You may browse using the tools: search_web (candidate URLs) and fetch_url (HTML) from ALLOWED_HOSTS only.',
+          '- After fetch_url on a known host, you MUST call extract_from_html to get deterministic extraction using site-specific selectors.',
           '- Goal: return ONLY the exact original lyrics, preserving line breaks. Do not translate or paraphrase.',
           '- If unknown or blocked, output hasLyrics=false.',
           `- Language hint: ${expectedLang}`,
@@ -223,10 +330,26 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
             required: ['url']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'extract_from_html',
+          description: 'Extract lyrics text using site-specific selectors from the last fetched HTML for the URL.',
+          parameters: {
+            type: 'object',
+            properties: { url: { type: 'string' } },
+            required: ['url']
+          }
+        }
       }
     ];
 
     const messages: any[] = [...system, ...fewShot, ...user];
+    // Prepend strong hint for Korean songs to prefer Bugs/Melon/Genie URLs
+    if (expectedLang === 'ko') {
+      messages.push({ role: 'system', content: 'When proposing URLs for Korean songs, prefer: music.bugs.co.kr track page, melon.com song detail page, and genie.co.kr songInfo page (not search list).' });
+    }
     const maxSteps = 10;
 
     for (let step = 0; step < maxSteps; step++) {
@@ -262,7 +385,22 @@ async function searchWithOpenAITools(artist: string, title: string): Promise<any
               let args: any = {};
               try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
               const result = await fetchUrlForTool(String(args.url || ''));
+              if (result && (result as any).ok && (result as any).html && (result as any).url) {
+                try { toolHtmlCache.set((result as any).url, (result as any).html); } catch {}
+              }
               messages.push({ role: 'tool', tool_call_id: c.id, name: 'fetch_url', content: JSON.stringify(result) });
+            } else if (c.function?.name === 'extract_from_html') {
+              let args: any = {};
+              try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
+              const u = String(args.url || '');
+              try {
+                const host = new URL(u).hostname.replace('www.', '');
+                const html = toolHtmlCache.get(u) || '';
+                const parsed = extractLyricsByHost(html, host);
+                messages.push({ role: 'tool', tool_call_id: c.id, name: 'extract_from_html', content: JSON.stringify({ url: u, host, ...parsed }) });
+              } catch (e) {
+                messages.push({ role: 'tool', tool_call_id: c.id, name: 'extract_from_html', content: JSON.stringify({ url: u, ok: false, error: String(e) }) });
+              }
             } else if (c.function?.name === 'search_web') {
               let args: any = {};
               try { args = JSON.parse(c.function.arguments || '{}'); } catch {}
@@ -666,9 +804,30 @@ export async function POST(request: NextRequest) {
     
     logger.search(`🤖 LLM Search: "${artist} - ${title}"`);
     
-    // Search with tools-enabled GPT first (browsing + HTML extraction), then others
-    // Sequential to reduce 429 bursts
-    const funcs = [searchWithOpenAITools, searchWithGroq, searchWithGPT, searchWithClaude, searchWithPerplexity];
+    // Search with tools-enabled GPT first (browsing + HTML extraction), then others.
+    // If Korean language is likely, try deterministic Korean scrapers early.
+    const quickKo = /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(`${artist}${title}`);
+    const langHint = quickKo ? 'ko' : detectDominantLang(`${artist} ${title}`);
+    const funcs = (
+      langHint === 'ko'
+        ? [
+            async (a: string, t: string) => {
+              try {
+                const r = await searchKoreanSites({ artist: a, title: t });
+                if (r?.success && r.result?.lyrics) {
+                  return { ...r.result, source: r.result.source || 'korean-sites', confidence: 0.95 };
+                }
+              } catch {}
+              return null;
+            },
+            searchWithOpenAITools,
+            searchWithGroq,
+            searchWithGPT,
+            searchWithClaude,
+            searchWithPerplexity
+          ]
+        : [searchWithOpenAITools, searchWithGroq, searchWithGPT, searchWithClaude, searchWithPerplexity]
+    );
     const validResults: any[] = [];
     for (const fn of funcs) {
       try {
@@ -689,7 +848,7 @@ export async function POST(request: NextRequest) {
     // Heuristic quality scoring and normalization
     const expected = detectDominantLang(`${artist} ${title}`);
     validResults.forEach(r => {
-      r.lyrics = normalizeLyrics(String(r.lyrics || ''));
+      r.lyrics = normalizeLyrics(stripSiteFooters(String(r.lyrics || '')));
       r._quality = scoreLyrics(r.lyrics, expected as any);
       // tighten confidence with heuristic
       r.confidence = 0.4 * (r.confidence || 0) + 0.6 * (r._quality || 0);
