@@ -342,58 +342,33 @@ export default function Home() {
   };
   
   return (
-    <div className={`min-h-screen transition-all duration-700 relative overflow-hidden ${
+    <div className={`min-h-screen ${
       isDark 
-        ? 'bg-gradient-to-br from-slate-950 via-purple-950/50 to-black' 
-        : 'bg-gradient-to-br from-blue-50 via-violet-50 to-pink-50'
+        ? 'bg-gray-900' 
+        : 'bg-gray-50'
     }`}>
       <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} />
       
-      {/* iOS 26 리퀴드 글래스 배경 효과 */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        {/* 그라디언트 메시 오브 */}
-        <div className="absolute top-20 -left-40 w-80 h-80 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-float" />
-        <div className="absolute top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-400 to-cyan-400 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-float-delayed" />
-        <div className="absolute -bottom-20 left-40 w-80 h-80 bg-gradient-to-br from-violet-400 to-indigo-400 rounded-full mix-blend-screen filter blur-3xl opacity-30 animate-float-slow" />
-        
-        {/* 스펙큘러 하이라이트 */}
-        <div className="absolute inset-0">
-          <div className="absolute top-0 left-1/4 w-1/2 h-64 bg-gradient-to-b from-white/5 to-transparent blur-2xl" />
-          <div className="absolute bottom-0 right-1/4 w-1/2 h-64 bg-gradient-to-t from-white/5 to-transparent blur-2xl" />
-        </div>
-      </div>
-      
-      {/* iOS 26 리퀴드 글래스 헤더 */}
-      <header className={`relative z-50 backdrop-blur-2xl backdrop-saturate-200 border-b ${
+      {/* 헤더 */}
+      <header className={`border-b ${
         isDark 
-          ? 'bg-black/10 border-white/10 shadow-2xl shadow-black/20' 
-          : 'bg-white/30 border-white/20 shadow-2xl shadow-black/5'
+          ? 'bg-gray-800 border-gray-700' 
+          : 'bg-white border-gray-200 shadow-sm'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className={`relative p-2 rounded-2xl backdrop-blur-xl ${
-                isDark 
-                  ? 'bg-gradient-to-br from-purple-500/20 to-pink-500/20 shadow-lg shadow-purple-500/10' 
-                  : 'bg-gradient-to-br from-purple-400/20 to-pink-400/20 shadow-lg shadow-purple-400/10'
-              }`}>
-                <div className="absolute inset-0 rounded-2xl bg-gradient-to-tr from-white/20 to-white/0" />
-                <div className={`relative ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  <MusicIcon />
-                </div>
+              <div className={isDark ? 'text-purple-400' : 'text-purple-600'}>
+                <MusicIcon />
               </div>
-              <h1 className={`text-2xl font-semibold tracking-tight`}>
-                <span className={`bg-gradient-to-r ${
-                  isDark 
-                    ? 'from-white via-purple-200 to-pink-200' 
-                    : 'from-gray-900 via-purple-700 to-pink-700'
-                } bg-clip-text text-transparent`}>
-                  Karaoke Live
-                </span>
-                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full backdrop-blur-xl ${
+              <h1 className={`text-xl font-semibold ${
+                isDark ? 'text-white' : 'text-gray-900'
+              }`}>
+                Karaoke Live
+                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
                   isDark
-                    ? 'bg-gradient-to-r from-purple-500/30 to-pink-500/30 text-purple-200 border border-purple-400/30'
-                    : 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-700 border border-purple-300/30'
+                    ? 'bg-purple-900 text-purple-300'
+                    : 'bg-purple-100 text-purple-700'
                 }`}>
                   Pro
                 </span>
@@ -401,16 +376,13 @@ export default function Home() {
             </div>
             <button
               onClick={toggleDarkMode}
-              className={`relative p-3 rounded-2xl transition-all duration-300 hover:scale-105 group ${
+              className={`p-2 rounded-lg transition-colors ${
                 isDark 
-                  ? 'bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-xl border border-white/10 hover:border-yellow-400/30' 
-                  : 'bg-gradient-to-br from-white/50 to-gray-100/50 backdrop-blur-xl border border-black/5 hover:border-purple-400/30'
+                  ? 'hover:bg-gray-700 text-yellow-400' 
+                  : 'hover:bg-gray-100 text-purple-600'
               }`}
             >
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-tr from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className={`relative transition-transform group-hover:rotate-12 ${
-                isDark ? 'text-yellow-400' : 'text-purple-600'
-              }`}>
+              <div>
                 {isDark ? <SunIcon /> : <MoonIcon />}
               </div>
             </button>
@@ -472,21 +444,21 @@ export default function Home() {
               </button>
             </div>
             
-            {/* iOS 26 스타일 검색 제안 */}
+            {/* 검색 제안 드롭다운 */}
             {showSuggestions && (
-              <div className={`absolute top-full left-0 right-0 mt-3 rounded-2xl overflow-hidden z-50 backdrop-blur-2xl backdrop-saturate-200 ${
+              <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg z-50 ${
                 isDark 
-                  ? 'bg-gray-900/80 border border-white/10 shadow-2xl shadow-black/50' 
-                  : 'bg-white/80 border border-black/5 shadow-2xl shadow-black/20'
+                  ? 'bg-gray-800 border border-gray-700 shadow-lg' 
+                  : 'bg-white border border-gray-200 shadow-lg'
               }`}>
+                <div className="max-h-64 overflow-y-auto scrollbar-thin">
                 {recentSearches.length > 0 && (
                   <div>
-                    <div className={`px-4 py-2.5 text-xs font-semibold tracking-wide backdrop-blur-xl ${
+                    <div className={`px-3 py-2 text-xs font-semibold ${
                       isDark 
-                        ? 'text-gray-400 bg-black/20 border-b border-white/5' 
-                        : 'text-gray-600 bg-white/30 border-b border-black/5'
+                        ? 'text-gray-400 bg-gray-900 border-b border-gray-700' 
+                        : 'text-gray-600 bg-gray-50 border-b border-gray-200'
                     }`}>
-                      <span className="inline-block mr-2 text-base">📋</span>
                       최근 검색
                     </div>
                     {recentSearches.map((search, i) => (
@@ -496,10 +468,10 @@ export default function Home() {
                           setSearchQuery(search);
                           handleSearch();
                         }}
-                        className={`w-full px-4 py-3 text-left transition-all duration-200 group ${
+                        className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                           isDark 
-                            ? 'hover:bg-white/5 text-gray-300 hover:text-white' 
-                            : 'hover:bg-black/5 text-gray-700 hover:text-gray-900'
+                            ? 'hover:bg-gray-700 text-gray-300' 
+                            : 'hover:bg-gray-50 text-gray-700'
                         }`}
                       >
                         {search}
@@ -508,12 +480,11 @@ export default function Home() {
                   </div>
                 )}
                 <div>
-                  <div className={`px-4 py-2.5 text-xs font-semibold tracking-wide backdrop-blur-xl ${
+                  <div className={`px-3 py-2 text-xs font-semibold ${
                     isDark 
-                      ? 'text-gray-400 bg-black/20 border-b border-white/5' 
-                      : 'text-gray-600 bg-white/30 border-b border-black/5'
+                      ? 'text-gray-400 bg-gray-900 border-b border-gray-700' 
+                      : 'text-gray-600 bg-gray-50 border-b border-gray-200'
                   }`}>
-                    <span className="inline-block mr-2 text-base">🔥</span>
                     인기 검색
                   </div>
                   {popularSearches.map((search, i) => (
@@ -523,15 +494,16 @@ export default function Home() {
                         setSearchQuery(search);
                         handleSearch();
                       }}
-                      className={`w-full px-4 py-3 text-left transition-all duration-200 group ${
+                      className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                         isDark 
-                          ? 'hover:bg-white/5 text-gray-300 hover:text-white' 
-                          : 'hover:bg-black/5 text-gray-700 hover:text-gray-900'
+                          ? 'hover:bg-gray-700 text-gray-300' 
+                          : 'hover:bg-gray-50 text-gray-700'
                       }`}
                     >
                       {search}
                     </button>
                   ))}
+                </div>
                 </div>
               </div>
             )}
@@ -550,15 +522,13 @@ export default function Home() {
           )}
         </div>
         
-        {/* iOS 26 리퀴드 글래스 메인 영역 */}
+        {/* 메인 컨텐츠 영역 */}
         {lyrics && (
-          <div className={`relative backdrop-blur-2xl backdrop-saturate-200 rounded-3xl overflow-hidden ${
+          <div className={`rounded-xl overflow-hidden ${
             isDark 
-              ? 'bg-gradient-to-br from-gray-800/30 via-gray-800/20 to-gray-900/30 border border-white/10 shadow-2xl shadow-black/30' 
-              : 'bg-gradient-to-br from-white/40 via-white/30 to-white/40 border border-white/30 shadow-2xl shadow-black/10'
+              ? 'bg-gray-800 border border-gray-700' 
+              : 'bg-white border border-gray-200 shadow-sm'
           }`}>
-            {/* 글래스 하이라이트 */}
-            <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-transparent pointer-events-none" />
             {/* 탭 헤더 */}
             <div className={`flex border-b ${
               isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-gray-50'
