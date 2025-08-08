@@ -129,14 +129,17 @@ export async function POST(request: NextRequest) {
             }
           ],
           temperature: 0.2,
-          max_tokens: 3500,
-          response_format: { type: 'json_object' }
+          max_tokens: 3500
         })
       });
-      if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}`);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        logger.api('OpenAI Translate', 'fail', `HTTP ${response.status} ${errText?.slice(0, 200)}`);
+        throw new Error(`OpenAI HTTP ${response.status}`);
+      }
       const data = await response.json();
       const raw = (data.choices?.[0]?.message?.content || '').trim();
-      // Allow both raw numbered text or JSON; try to parse numbered lines robustly
+      // Parse numbered lines; tolerate minor formatting
       const numbered = raw
         .split('\n')
         .map((line: string) => line.replace(/^\s*\d+\.\s*/, '').trim())
