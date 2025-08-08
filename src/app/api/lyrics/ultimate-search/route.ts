@@ -204,17 +204,16 @@ async function searchPerplexityPro(artist: string, title: string): Promise<Searc
     
     const { artistDisplay, titleDisplay } = await formatMultilingualDisplay(artist, title);
     
-    const prompt = `Search for and extract the complete text content of the song "${titleDisplay}" by "${artistDisplay}".
+    const prompt = `Find the best lyrics pages/URLs for the song "${titleDisplay}" by "${artistDisplay}".
 
 Requirements:
-- Extract the FULL text from start to finish
-- Include ALL sections (verses, chorus, bridge, etc.)
-- Keep original language formatting
-- Maintain line breaks as they appear
-- Do not add any analysis or descriptions
-- Just return the raw text content as found
+- Find and list URLs of pages that contain the full lyrics
+- Prioritize official sites, music databases, and lyric sites
+- Include Korean sites like Melon, Bugs, Genie if it's a Korean song
+- Include sites like Genius, AZLyrics, LyricFind for international songs
+- Return the URLs and brief descriptions
 
-Output format: Plain text only.`;
+Output: List the URLs found with their site names.`;
     
     // Use sonar-reasoning-pro for better results
     const requestBody = {
@@ -351,16 +350,73 @@ Output format: Plain text only.`;
             console.log(`[Perplexity] Trying to fetch from ${nonYtUrls[0].url}`);
             
             try {
-              // Import and use the searchEngine function
-              const { searchEngine } = await import('../search-engine/utils');
-              const extractedLyrics = await searchEngine(artist, title, [nonYtUrls[0].url]);
+              // Fetch HTML directly and extract with Groq
+              const htmlResponse = await fetch(nonYtUrls[0].url, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                  'Accept': 'text/html,application/xhtml+xml',
+                  'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8'
+                }
+              });
               
-              if (extractedLyrics && extractedLyrics.length > 0 && extractedLyrics[0].lyrics) {
-                console.log(`[Perplexity] Successfully extracted lyrics from URL: ${extractedLyrics[0].lyrics.length} chars`);
-                timer.success(`Extracted from URL (${extractedLyrics[0].lyrics.length} chars)`);
+              if (!htmlResponse.ok) {
+                throw new Error(`Failed to fetch ${nonYtUrls[0].url}`);
+              }
+              
+              const html = await htmlResponse.text();
+              console.log(`[Perplexity] Fetched HTML from ${nonYtUrls[0].url}, length: ${html.length}`);
+              
+              // Clean and extract lyrics using Groq
+              const cleanedHtml = html
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+                .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+                .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+                .substring(0, 15000);
+              
+              // Use Groq to extract lyrics
+              const groqApiKey = process.env.GROQ_API_KEY || (await getSecret('groq'));
+              if (!groqApiKey) {
+                throw new Error('Groq API key not available');
+              }
+              
+              const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${groqApiKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'openai/gpt-oss-120b',
+                  messages: [
+                    {
+                      role: 'system',
+                      content: 'Extract only the song lyrics from the HTML. Return ONLY the raw lyrics text. No explanations, headers, titles, or credits. Preserve original line breaks.'
+                    },
+                    {
+                      role: 'user',
+                      content: `Extract the lyrics from this HTML:\n\n${cleanedHtml}`
+                    }
+                  ],
+                  temperature: 0.0,
+                  max_tokens: 5000
+                })
+              });
+              
+              if (!groqResponse.ok) {
+                throw new Error(`Groq API failed: ${groqResponse.status}`);
+              }
+              
+              const groqData = await groqResponse.json();
+              const extractedLyrics = groqData.choices?.[0]?.message?.content || '';
+              
+              if (extractedLyrics && extractedLyrics.length > 100) {
+                console.log(`[Perplexity] Successfully extracted lyrics from URL: ${extractedLyrics.length} chars`);
+                timer.success(`Extracted from URL (${extractedLyrics.length} chars)`);
                 return {
                   source: `perplexity-scraped-${new URL(nonYtUrls[0].url).hostname}`,
-                  lyrics: extractedLyrics[0].lyrics,
+                  lyrics: extractedLyrics,
                   confidence: 0.75,
                   hasTimestamps: false,
                   metadata: {
@@ -782,16 +838,14 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
   logger.startSession(`${artist} - ${title}`);
   logger.search(`Ultimate search for: ${artist} - ${title}`);
   
-  // Define search strategies with priorities
-  // Start with just 2 APIs to test
+  // Define search strategies with priorities - ALL ENABLED
   const strategies: SearchStrategy[] = [
     { name: 'LRCLIB', search: searchLRCLIB, priority: 10 },
+    { name: 'Korean Sites', search: searchKoreanSites, priority: 9 },
     { name: 'Perplexity Pro', search: searchPerplexityPro, priority: 8 },
-    // Temporarily disable others for testing
-    // { name: 'Korean Sites', search: searchKoreanSites, priority: 9 },
-    // { name: 'GPT-5', search: searchGPT5, priority: 7 },
-    // { name: 'Claude 3.5', search: searchClaude35, priority: 6 },
-    // { name: 'Gemini 1.5', search: searchGemini15, priority: 5 },
+    { name: 'GPT-5', search: searchGPT5, priority: 7 },
+    { name: 'Claude 3.5', search: searchClaude35, priority: 6 },
+    { name: 'Gemini 1.5', search: searchGemini15, priority: 5 },
   ];
   
   console.log(`Running ${strategies.length} search strategies...`);

@@ -10,6 +10,7 @@ interface LyricsDisplayProps {
   textColor?: string;
   showNext?: boolean;
   showTranslation?: boolean;
+  translationSize?: number;
 }
 
 export default function LyricsDisplay({
@@ -19,7 +20,8 @@ export default function LyricsDisplay({
   fontSize = 48,
   textColor = '#FFFFFF',
   showNext = true,
-  showTranslation = true
+  showTranslation = true,
+  translationSize = 40
 }: LyricsDisplayProps) {
   const [animationKey, setAnimationKey] = useState(0);
 
@@ -83,7 +85,7 @@ export default function LyricsDisplay({
               key={lang}
               className="text-right"
               style={{
-                fontSize: `${fontSize * 0.4}px`,  // 40%로 줄임
+                fontSize: `${translationSize}px`,  // 동적 크기 적용
                 color: '#FFFFFF',
                 opacity: 0.9,
                 fontWeight: 'bold',  // 번역 텍스트 굵게

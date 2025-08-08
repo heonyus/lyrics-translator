@@ -115,7 +115,7 @@ async function extractLyricsWithGroq(html: string, url: string): Promise<string 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || 'llama-3-groq-70b-tool-use',
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
         messages: [
           {
             role: 'system',

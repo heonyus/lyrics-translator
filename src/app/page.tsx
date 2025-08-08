@@ -643,9 +643,9 @@ export default function MobileDashboard() {
     localStorage.setItem('selected_languages', JSON.stringify(newSettings.selectedLanguages));
   };
 
-  // Get OBS URL - Updated to use enhanced overlay
+  // Get OBS URL - Using mobile-live for TikTok
   const getEnhancedOBSUrl = () => {
-    const baseUrl = window.location.origin + '/obs/overlay-enhanced';
+    const baseUrl = window.location.origin + '/obs/mobile-live';
     const params = new URLSearchParams({
       chromaKey: settings.chromaKey,
       lang: settings.selectedLanguages[0] || 'en'

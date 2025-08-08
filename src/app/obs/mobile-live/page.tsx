@@ -51,6 +51,11 @@ function MobileLiveOverlayContent() {
   const [chromaKey, setChromaKey] = useState('#00FF00'); // Standard green screen color
   const [isViewer, setIsViewer] = useState(false); // 시청자 화면인지 확인
 
+  // Position settings
+  const [lyricsPosition, setLyricsPosition] = useState({ x: 85, y: 50 }); // Right side default
+  const [titlePosition, setTitlePosition] = useState({ x: 12, y: 10 }); // Left side default
+  const [textSizes, setTextSizes] = useState({ originalSize: 60, translationSize: 40 }); // Mobile sizes
+
   // Calculate scale based on actual window size
   const [scale, setScale] = useState(0.5); // 기본 스케일 0.5 (540x960)
 
@@ -209,6 +214,32 @@ function MobileLiveOverlayContent() {
         setShowTranslation(settings.showTranslation ?? true);
       }
       
+      // Load position settings
+      const lyricsPos = localStorage.getItem('obs_lyrics_position');
+      if (lyricsPos) {
+        try {
+          setLyricsPosition(JSON.parse(lyricsPos));
+        } catch {}
+      }
+      
+      const titlePos = localStorage.getItem('obs_title_position');
+      if (titlePos) {
+        try {
+          setTitlePosition(JSON.parse(titlePos));
+        } catch {}
+      }
+      
+      const textSize = localStorage.getItem('obs_text_size');
+      if (textSize) {
+        try {
+          const sizes = JSON.parse(textSize);
+          setTextSizes({
+            originalSize: Math.round(sizes.originalSize * 0.3) || 60, // Scale down for mobile
+            translationSize: Math.round(sizes.translationSize * 0.25) || 40
+          });
+        } catch {}
+      }
+      
       if (lyrics) {
         setLyricsLines(lyrics.split('\n').filter(line => line.trim()));
       }
@@ -275,7 +306,14 @@ function MobileLiveOverlayContent() {
       >
       {/* Top Section - Album Info (if enabled) */}
       {showAlbumInfo && albumInfo.title && (
-        <div className="absolute top-[20%] left-44 z-10">
+        <div 
+          className="absolute z-10"
+          style={{
+            top: `${titlePosition.y}%`,
+            left: `${titlePosition.x}%`,
+            transform: 'translate(-50%, -50%)'
+          }}
+        >
           <AlbumCard
             title={albumInfo.title}
             artist={albumInfo.artist}
@@ -288,7 +326,14 @@ function MobileLiveOverlayContent() {
       )}
 
       {/* Bottom Section - Lyrics Display */}
-      <div className="absolute top-[45%] right-[15%] w-[45%] max-w-[450px]">
+      <div 
+        className="absolute w-[45%] max-w-[450px]"
+        style={{
+          top: `${lyricsPosition.y}%`,
+          left: `${lyricsPosition.x}%`,
+          transform: 'translate(-50%, -50%)'
+        }}
+      >
         <LyricsDisplay
           currentLine={lyricsLines[currentLineIndex] || ''}
           nextLine={hasNextLine ? lyricsLines[nextLineIndex] : undefined}
@@ -300,10 +345,11 @@ function MobileLiveOverlayContent() {
               return acc;
             }, {} as { [lang: string]: string })
           }
-          fontSize={fontSize}
+          fontSize={textSizes.originalSize}
           textColor={textColor}
           showNext={!isViewer && showNextLine}
           showTranslation={showTranslation}
+          translationSize={textSizes.translationSize}
         />
       </div>
     </div>
