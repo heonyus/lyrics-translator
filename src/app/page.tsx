@@ -381,15 +381,20 @@ export default function MobileDashboard() {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.albumInfo) {
+          const info = data.albumInfo;
           setCurrentSong(prev => ({
             ...prev,
-            album: data.albumInfo.album || '',
-            coverUrl: data.albumInfo.coverUrl || ''
+            title: info.titleDisplay || prev.title,
+            artist: info.artistDisplay || prev.artist,
+            album: info.album || '',
+            coverUrl: info.coverUrl || ''
           }));
-          
-          localStorage.setItem('current_album', data.albumInfo.album || '');
-          localStorage.setItem('current_cover_url', data.albumInfo.coverUrl || '');
-          
+
+          if (info.titleDisplay) localStorage.setItem('current_title', info.titleDisplay);
+          if (info.artistDisplay) localStorage.setItem('current_artist', info.artistDisplay);
+          localStorage.setItem('current_album', info.album || '');
+          localStorage.setItem('current_cover_url', info.coverUrl || '');
+
           toast.success('🎨 앨범 정보를 가져왔습니다');
         }
       }

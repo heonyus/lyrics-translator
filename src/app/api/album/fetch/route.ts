@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
 import { detectDominantLang } from '@/app/api/lyrics/quality';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getSecret } from '@/lib/secure-secrets';
 
 type ItunesResult = {
   trackName?: string;
@@ -66,6 +68,59 @@ async function fetchFromItunesMulti(artist: string, title: string) {
   return out;
 }
 
+async function llmDisplayMap(
+  artist: string,
+  title: string,
+  enArtist?: string,
+  enTitle?: string
+): Promise<{ artistDisplay: string; titleDisplay: string } | null> {
+  try {
+    const apiKey = (await getSecret('google')) || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    if (!apiKey) return null;
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const toUpperTight = (s?: string) => (s || '').replace(/\s+/g, '').toUpperCase();
+    const prompt = [
+      'You are a formatter for song metadata display. Return JSON only.',
+      'Rules:',
+      '- Keep ORIGINAL script as-is.',
+      '- Append an ASCII English uppercase form in parentheses, with no spaces, e.g. "호시노겐(HOSHINOGEN)", "星野源(HOSHINOGEN)", "محمد عبد الوهاب(MOHAMMADABDALWAHHAB)", "แสตมป์อภิวัชร์(STAMPAPIWAT)".',
+      '- Use provided English candidates if they exist; otherwise romanize accurately.',
+      '- Never add explanations. Output strictly:\n{"artistDisplay":"...","titleDisplay":"..."}',
+      '',
+      'Few-shots:',
+      'Input: artist="호시노겐", title="코이", enArtist="Hoshino Gen", enTitle="Koi"',
+      'Output: {"artistDisplay":"호시노겐(HOSHINOGEN)","titleDisplay":"코이(KOI)"}',
+      'Input: artist="星野源", title="恋", enArtist="Hoshino Gen", enTitle="Koi"',
+      'Output: {"artistDisplay":"星野源(HOSHINOGEN)","titleDisplay":"恋(KOI)"}',
+      'Input: artist="محمد عبد الوهاب", title="الحب", enArtist="Mohammad Abd Al Wahhab", enTitle="Al Hubb"',
+      'Output: {"artistDisplay":"محمد عبد الوهاب(MOHAMMADABDALWAHHAB)","titleDisplay":"الحب(ALHUBB)"}',
+      'Input: artist="แสตมป์ อภิวัชร์", title="ใจอ้วน", enArtist="Stamp Apiwat", enTitle="Jai Uan"',
+      'Output: {"artistDisplay":"แสตมป์ อภิวัชร์(STAMPAPIWAT)","titleDisplay":"ใจอ้วน(JAIUAN)"}',
+      '',
+      `Input: artist="${artist}", title="${title}", enArtist="${enArtist || ''}", enTitle="${enTitle || ''}"`,
+      'Output:'
+    ].join('\n');
+
+    const resp = await model.generateContent(prompt);
+    const text = resp.response.text().trim();
+    const jsonStart = text.indexOf('{');
+    const jsonEnd = text.lastIndexOf('}');
+    if (jsonStart === -1 || jsonEnd === -1) return null;
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    if (!parsed?.artistDisplay || !parsed?.titleDisplay) return null;
+    // Ensure uppercase inside parens
+    const up = (s: string) => s.replace(/\(([^)]+)\)/, (_m, p1) => `(${toUpperTight(p1)})`);
+    return {
+      artistDisplay: up(String(parsed.artistDisplay)),
+      titleDisplay: up(String(parsed.titleDisplay))
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const timer = new APITimer('Album Fetch');
   try {
@@ -81,23 +136,24 @@ export async function POST(request: NextRequest) {
     const multi = await fetchFromItunesMulti(artist, title);
     const preferred = multi['kr'] || multi['us'] || multi['jp'];
     if (preferred) {
-      // Display mapping: input 스크립트 기준으로 영어/일본어 병기
-      const script = detectDominantLang(`${artist} ${title}`);
       const en = multi['us'];
       const jp = multi['jp'];
-      let artistDisplay = artist;
-      let titleDisplay = title;
-      const toUpperTight = (s?: string) => (s || '').replace(/\s+/g, '').toUpperCase();
-      if (script === 'ko') {
-        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${toUpperTight(en.artistName)})`;
-        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${toUpperTight(en.trackName)})`;
-      } else if (script === 'ja') {
-        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${toUpperTight(en.artistName)})`;
-        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${toUpperTight(en.trackName)})`;
-      } else {
-        // 영어 입력 등: 일본어가 있으면 병기
-        if (jp?.artistName && jp.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${jp.artistName})`;
-        if (jp?.trackName && jp.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${jp.trackName})`;
+      // 1) 우선 LLM으로 다국어 표기 매핑 시도
+      const llm = await llmDisplayMap(artist, title, en?.artistName, en?.trackName);
+      let artistDisplay = llm?.artistDisplay || artist;
+      let titleDisplay = llm?.titleDisplay || title;
+      // 2) LLM 실패 시 간단한 백업 규칙(영문 병기 or 일본어 병기)
+      if (!llm) {
+        const script = detectDominantLang(`${artist} ${title}`);
+        const jp = multi['jp'];
+        const toUpperTight = (s?: string) => (s || '').replace(/\s+/g, '').toUpperCase();
+        if (script === 'ko' || script === 'ja') {
+          if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${toUpperTight(en.artistName)})`;
+          if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${toUpperTight(en.trackName)})`;
+        } else if (jp) {
+          if (jp.artistName && jp.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${jp.artistName})`;
+          if (jp.trackName && jp.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${jp.trackName})`;
+        }
       }
       timer.success('Album info fetched from iTunes');
       return NextResponse.json({ success: true, albumInfo: { ...preferred, artistDisplay, titleDisplay, artistEn: en?.artistName, titleEn: en?.trackName, artistJa: jp?.artistName, titleJa: jp?.trackName } });
