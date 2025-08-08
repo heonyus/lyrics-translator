@@ -89,7 +89,12 @@
       "Bash(npm:*)",
       "Bash(./build-test.sh:*)",
       "WebFetch(domain:lyrics-translator-six.vercel.app)",
-      "WebFetch(domain:lylics-translator.vercel.app)"
+      "WebFetch(domain:lylics-translator.vercel.app)",
+      "Bash(kill:*)",
+      "Bash(wget:*)",
+      "Bash(sudo lsof:*)",
+      "Bash(PORT=3000 npm run dev)",
+      "Bash(/dev/null)"
     ],
     "deny": []
   }

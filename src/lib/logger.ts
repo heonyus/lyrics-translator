@@ -2,6 +2,9 @@
 const isProduction = process.env.NODE_ENV === 'production';
 const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
 
+// Enable debug logging
+const DEBUG = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
+
 // Log levels
 const LOG_LEVELS = {
   ERROR: 0,
@@ -402,6 +405,17 @@ export const logger = {
       log('INFO', message);
     } else {
       console.log(`ℹ️  ${getTimestamp()} ${colors.bgBlue}${colors.white} INFO ${colors.reset} ${colors.blue}${message}${colors.reset}`);
+    }
+  },
+  
+  debug: (message: string, data?: any) => {
+    if (!DEBUG) return;
+    
+    if (isProduction || isVercel) {
+      log('DEBUG', message, data);
+    } else {
+      const dataStr = data ? ` ${colors.gray}${JSON.stringify(data)}${colors.reset}` : '';
+      console.log(`🔍 ${getTimestamp()} ${colors.bgCyan}${colors.black} DEBUG ${colors.reset} ${colors.cyan}${message}${colors.reset}${dataStr}`);
     }
   },
   

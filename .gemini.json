@@ -3,8 +3,8 @@
   "description": "Karaoke-style lyrics translator with real-time rendering",
   "version": "0.1.0",
   "models": {
-    "default": "gemini-1.5-pro",
-    "codeReview": "gemini-1.5-pro",
+    "default": "gemini-2.5-pro",
+    "codeReview": "gemini-2.5-pro",
     "optimization": "gemini-1.5-flash"
   },
   "settings": {

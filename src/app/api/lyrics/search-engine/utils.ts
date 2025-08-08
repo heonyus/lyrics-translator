@@ -56,7 +56,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'sonar-pro',
+            model: process.env.PERPLEXITY_MODEL_FALLBACK || 'sonar-reasoning-pro',
             messages: [
               { role: 'user', content: `Only output plain URLs (one per line) for the exact lyrics page of "${artist} - ${title}". Sites: ${providers.join(', ')}. Exclude search pages.` }
             ],

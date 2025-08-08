@@ -87,7 +87,7 @@ async function parseWithClaude(query: string): Promise<any | null> {
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
+        model: 'claude-opus-4-1-20250805',
         max_tokens: 200,
         messages: [
           {
@@ -156,7 +156,7 @@ async function parseWithGPT(query: string): Promise<any | null> {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         messages: [
           {
             role: 'system',

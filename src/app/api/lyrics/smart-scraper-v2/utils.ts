@@ -29,7 +29,7 @@ async function searchWithPerplexity(artist: string, title: string): Promise<stri
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'sonar-medium-online',
+        model: 'sonar-reasoning-pro',
         messages: [
           {
             role: 'system',
@@ -86,7 +86,7 @@ async function searchWithClaude(artist: string, title: string): Promise<string |
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-opus-4-1-20250805',
         max_tokens: 6000,
         messages: [
           {

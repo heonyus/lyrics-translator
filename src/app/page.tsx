@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Search, Copy, Monitor, Smartphone, Music, Settings, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ExternalLink, Edit, RefreshCw, FileText, Eye, Globe, Loader } from 'lucide-react';
+import { Search, Copy, Monitor, Smartphone, Music, Settings, Play, Pause, RotateCcw, ChevronRight, ChevronLeft, ExternalLink, Edit, RefreshCw, FileText, Eye, EyeOff, Globe, Loader, Palette } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { toast, Toaster } from 'sonner';
 import LyricsResultSelector from '@/components/LyricsResultSelector';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+
+// Dynamic import for TextCustomizer to avoid SSR issues
+const TextCustomizer = dynamic(() => import('@/components/TextCustomizer'), { ssr: false });
 
 export default function MobileDashboard() {
   // Search & Song
@@ -35,7 +39,10 @@ export default function MobileDashboard() {
     fontSize: 48,
     textColor: '#FFFFFF',
     chromaKey: '#00FF00',
-    selectedLanguages: ['en', 'ja']
+    selectedLanguages: ['en', 'ja'],
+    lyricsPosition: { x: 50, y: 50 },
+    titlePosition: { x: 50, y: 10 },
+    textSizes: { originalSize: 200, translationSize: 160 }
   });
 
   // Translations
@@ -46,6 +53,18 @@ export default function MobileDashboard() {
   // Search session control (to cancel/ignore late results)
   const searchSessionRef = useRef(0);
   const cancelSearchRef = useRef<(() => void) | null>(null);
+  
+  // Text customization
+  const [showTextCustomizer, setShowTextCustomizer] = useState(false);
+  
+  // Lyrics visibility
+  const [lyricsHidden, setLyricsHidden] = useState(false);
+  
+  // Inline editing states
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingArtist, setEditingArtist] = useState(false);
+  const [tempTitle, setTempTitle] = useState('');
+  const [tempArtist, setTempArtist] = useState('');
   
   // Editor states
   const [showLyricsEditor, setShowLyricsEditor] = useState(false);
@@ -64,6 +83,7 @@ export default function MobileDashboard() {
     const savedSettings = localStorage.getItem('mobile_overlay_settings');
     const savedLanguages = localStorage.getItem('selected_languages');
     const translationEnabled = localStorage.getItem('translation_enabled') === 'true';
+    const savedLyricsHidden = localStorage.getItem('lyrics_hidden') === 'true';
     
     const lines = lyrics.split('\n').filter(l => l.trim());
     
@@ -90,6 +110,9 @@ export default function MobileDashboard() {
       setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings) }));
     }
     
+    // Restore lyrics hidden state
+    setLyricsHidden(savedLyricsHidden);
+    
     // 번역이 활성화되어 있고 가사가 있으면서 번역이 없으면 자동 번역
     if (translationEnabled && lines.length > 0 && !savedTranslations) {
       const langs = savedLanguages ? JSON.parse(savedLanguages) : [];
@@ -114,127 +137,143 @@ export default function MobileDashboard() {
     } catch { return []; }
   };
 
-  // Run multiple providers concurrently and append results as soon as they arrive
+  // Use Ultimate Search API for comprehensive parallel search
   const parallelSearch = async (artist: string, title: string, query: string, forceRefresh = false) => {
     // new session id
     const mySession = ++searchSessionRef.current;
-    const controllers: AbortController[] = [];
-    const addController = () => { const c = new AbortController(); controllers.push(c); return c; };
+    const controller = new AbortController();
+    
     // expose canceler for outer handlers
-    cancelSearchRef.current = () => controllers.forEach(c => { try { c.abort(); } catch {} });
-    const enqueue = (arr: any[]) => {
-      // ignore late results from older sessions
-      if (mySession !== searchSessionRef.current) return;
-      if (arr && arr.length > 0) {
-        setSearchResults(prev => {
-          if (mySession !== searchSessionRef.current) return prev;
-          // dedupe by lyrics+source key
-          const seen = new Set(prev.map((r: any) => `${r.source}|${(r.lyrics||'').slice(0,50)}`));
-          const merged = [...prev];
-          for (const r of arr) {
-            const key = `${r.source||'unknown'}|${String(r.lyrics||'').slice(0,50)}`;
-            if (!seen.has(key)) merged.push(r);
-          }
-          return merged;
-        });
-      }
-    };
-
-    const tasks: Array<Promise<void>> = [];
-    // Always run multiple providers in parallel (fastest wins): MCP + Korean scrapers + consolidate optional
-    {
-      const c = addController();
-      (async () => {
-        try {
-          const res = await fetch('/api/lyrics/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title, query }), signal: c.signal });
-          const json = await res.json().catch(()=>null);
-          enqueue(adaptResults('mcp', json));
-          if (json?.result?.albumInfo) {
-            setCurrentSong(prev => ({ ...prev, album: json.result.albumInfo.album || prev.album, coverUrl: json.result.albumInfo.coverUrl || prev.coverUrl }));
-          }
-        } catch {}
-      })();
-    }
-    {
-      const c = addController();
-      (async () => {
-        try {
-          const res = await fetch('/api/lyrics/korean-scrapers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
-          const json = await res.json().catch(()=>null);
-          enqueue(adaptResults('kr', json));
-        } catch {}
-      })();
-    }
-    {
-      const c = addController();
-      (async () => {
-        try {
-          // consolidate는 기존 결과 묶음에 쓰이므로, 일단 페이지에서는 사용 안 하지만 placeholder
-          const res = await fetch('/api/lyrics/consolidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results: [], artist, title }), signal: c.signal });
-          const json = await res.json().catch(()=>null);
-          enqueue(adaptResults('consolidate', json));
-        } catch {}
-      })();
-    }
-
-    // smart-scraper-v3 (기존 유지)
-    tasks.push((async () => {
-      const c = addController();
-      try {
-        const res = await fetch('/api/lyrics/smart-scraper-v3', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, forceRefresh }), signal: c.signal });
-        const json = await res.json().catch(()=>null);
-        enqueue(adaptResults('v3', json));
-      } catch {}
-    })());
-    // llm-search (기존 유지)
-    tasks.push((async () => {
-      const c = addController();
-      try {
-        const res = await fetch('/api/lyrics/llm-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
-        const json = await res.json().catch(()=>null);
-        enqueue(adaptResults('llm', json));
-      } catch {}
-    })());
-    // gemini-search
-    tasks.push((async () => {
-      const c = addController();
-      try {
-        const res = await fetch('/api/lyrics/gemini-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
-        const json = await res.json().catch(()=>null);
-        enqueue(adaptResults('gemini', json));
-      } catch {}
-    })());
-    // search-engine
-    tasks.push((async () => {
-      const c = addController();
-      try {
-        const res = await fetch('/api/lyrics/search-engine', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title, engine: 'auto' }), signal: c.signal });
-        const json = await res.json().catch(()=>null);
-        enqueue(adaptResults('engine', json));
-      } catch {}
-    })());
-
-    // Wait until at least one result arrives or all tasks settle
-    const timeout = new Promise<void>(r => setTimeout(r, 8000));
-    await Promise.race([
-      (async () => {
-        while (true) {
-          await new Promise(r => setTimeout(r, 200));
-          if (mySession !== searchSessionRef.current) break; // canceled/invalidated
-          if ((searchResults as any[]).length > 0) break;
+    cancelSearchRef.current = () => { try { controller.abort(); } catch {} };
+    
+    try {
+      console.log(`🔍 Ultimate Search: ${artist} - ${title}`);
+      
+      // Add timeout to prevent hanging
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        toast.error('검색 시간 초과 (30초)');
+      }, 30000);
+      
+      // Call Ultimate Search API which handles all providers in parallel
+      const res = await fetch('/api/lyrics/ultimate-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artist, title }),
+        signal: controller.signal
+      }).catch(err => {
+        clearTimeout(timeoutId);
+        throw err;
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) {
+        console.error('Ultimate search failed:', res.status, res.statusText);
+        if (res.status === 404) {
+          // Try to handle main-app.js 404 gracefully
+          console.warn('Possible webpack chunk error, reloading may help');
+          toast.error('검색 실패 - 페이지를 새로고침 해주세요');
+        } else if (res.status === 500) {
+          toast.error('서버 오류가 발생했습니다');
+        } else {
+          toast.error(`검색 오류 (${res.status})`);
         }
-      })(),
-      timeout
-    ]);
-    // Allow remaining tasks to finish in background (no blocking)
-    Promise.allSettled(tasks).then(()=>{});
-    return () => controllers.forEach(c => c.abort());
+        return;
+      }
+      
+      const data = await res.json();
+      
+      // Check if this is still the current search session
+      if (mySession !== searchSessionRef.current) return;
+      
+      // Process main result
+      if (data.lyrics) {
+        const mainResult = {
+          source: data.source,
+          lyrics: data.lyrics,
+          confidence: data.confidence,
+          hasTimestamps: data.hasTimestamps,
+          metadata: data.metadata
+        };
+        
+        // Set main result
+        setSearchResults([mainResult]);
+        
+        // Add alternatives if available
+        if (data.alternatives && Array.isArray(data.alternatives)) {
+          const alternativeResults = data.alternatives.map((alt: any) => ({
+            source: alt.source,
+            lyrics: alt.preview ? alt.preview.replace('...', '') + '...' : '',
+            confidence: alt.confidence,
+            hasTimestamps: alt.hasTimestamps,
+            isPreview: true
+          }));
+          
+          setSearchResults(prev => {
+            if (mySession !== searchSessionRef.current) return prev;
+            return [...prev, ...alternativeResults];
+          });
+        }
+        
+        // Update album info if available
+        if (data.metadata?.album || data.metadata?.coverUrl) {
+          setCurrentSong(prev => ({
+            ...prev,
+            album: data.metadata.album || prev.album,
+            coverUrl: data.metadata.coverUrl || prev.coverUrl
+          }));
+        }
+        
+        console.log(`✅ Ultimate Search found ${data.totalResults} results`);
+        toast.success(`${data.totalResults}개 소스에서 가사를 찾았습니다`);
+      } else {
+        console.warn('No lyrics found from Ultimate Search');
+        toast.error('가사를 찾을 수 없습니다');
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          console.log('Search aborted or timed out');
+          // Don't show error if user cancelled
+          if (mySession === searchSessionRef.current) {
+            toast.info('검색이 취소되었습니다');
+          }
+        } else if (error.message.includes('Failed to fetch')) {
+          console.error('Network error:', error);
+          toast.error('네트워크 오류 - 인터넷 연결을 확인해주세요');
+        } else {
+          console.error('Ultimate search error:', error);
+          toast.error(`검색 오류: ${error.message}`);
+        }
+      } else {
+        console.error('Unknown error:', error);
+        toast.error('알 수 없는 오류가 발생했습니다');
+      }
+    } finally {
+      // Cleanup
+      if (mySession === searchSessionRef.current) {
+        cancelSearchRef.current = null;
+      }
+    }
+    
+    return () => controller.abort();
   };
 
   // Quick search
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!searchQuery.trim()) return;
+    
+    // Prevent search if already searching
+    if (isSearching) {
+      toast.info('이미 검색 중입니다');
+      return;
+    }
+    
+    if (!searchQuery.trim()) {
+      toast.error('검색어를 입력해주세요');
+      return;
+    }
     
     // cancel previous search session
     cancelSearchRef.current?.();
@@ -283,13 +322,35 @@ export default function MobileDashboard() {
       
       console.log(`Searching for: ${artist} - ${title}`);
       
+      // Set title and artist immediately so they show even if search fails
+      setCurrentSong(prev => ({
+        ...prev,
+        title: title,
+        artist: artist,
+        lyrics: '',  // Clear previous lyrics
+        lyricsLines: []
+      }));
+      
+      // Update localStorage so OBS overlay shows it
+      localStorage.setItem('current_title', title);
+      localStorage.setItem('current_artist', artist);
+      
       // Fire providers in parallel and append as they arrive
       await parallelSearch(artist, title, searchQuery, false);
-      if ((searchResults as any[]).length > 0) {
-        toast.success('첫 결과를 가져왔습니다');
-      }
+      
+      // Check if we got any results
+      setTimeout(() => {
+        if (searchResults.length === 0 && !isSearching) {
+          toast.info('검색 결과가 없습니다. 다른 검색어를 시도해보세요.');
+        }
+      }, 1000);
     } catch (error) {
-      toast.error('검색 실패');
+      console.error('Search error:', error);
+      if (error instanceof Error) {
+        toast.error(`검색 실패: ${error.message}`);
+      } else {
+        toast.error('검색 중 오류가 발생했습니다');
+      }
     } finally {
       setIsSearching(false);
     }
@@ -417,6 +478,43 @@ export default function MobileDashboard() {
     }
   };
 
+  // Toggle lyrics visibility
+  const toggleLyricsVisibility = () => {
+    const newState = !lyricsHidden;
+    setLyricsHidden(newState);
+    localStorage.setItem('lyrics_hidden', newState.toString());
+    toast.success(newState ? '가사를 숨겼습니다' : '가사를 표시합니다');
+  };
+
+  // Title/Artist editing functions
+  const startEditingTitle = () => {
+    setTempTitle(currentSong.title);
+    setEditingTitle(true);
+  };
+
+  const startEditingArtist = () => {
+    setTempArtist(currentSong.artist);
+    setEditingArtist(true);
+  };
+
+  const saveTitle = () => {
+    if (tempTitle.trim()) {
+      setCurrentSong(prev => ({ ...prev, title: tempTitle.trim() }));
+      localStorage.setItem('current_title', tempTitle.trim());
+      toast.success('제목을 수정했습니다');
+    }
+    setEditingTitle(false);
+  };
+
+  const saveArtist = () => {
+    if (tempArtist.trim()) {
+      setCurrentSong(prev => ({ ...prev, artist: tempArtist.trim() }));
+      localStorage.setItem('current_artist', tempArtist.trim());
+      toast.success('가수명을 수정했습니다');
+    }
+    setEditingArtist(false);
+  };
+
   // Translate lyrics
   const translateLyrics = async (lines: string[], forceTranslate = false, langsOverride?: string[]) => {
     if (!lines.length) return;
@@ -434,7 +532,9 @@ export default function MobileDashboard() {
     try {
       // 각 언어별로 병렬로 번역 요청
       const translationPromises = targetLangs.map(async (lang) => {
-        const response = await fetch('/api/translate/batch', {
+        // Use GPT-5 for better quality translations
+        const response = await fetch('/api/translate/gpt5', {
+          method: 'PUT',  // PUT for batch translation
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -444,7 +544,7 @@ export default function MobileDashboard() {
               title: currentSong.title,
               artist: currentSong.artist
             },
-            task: 'translate'
+            // Removed task field for GPT-5 API
           })
         });
         
@@ -543,7 +643,17 @@ export default function MobileDashboard() {
     localStorage.setItem('selected_languages', JSON.stringify(newSettings.selectedLanguages));
   };
 
-  // Get OBS URL
+  // Get OBS URL - Updated to use enhanced overlay
+  const getEnhancedOBSUrl = () => {
+    const baseUrl = window.location.origin + '/obs/overlay-enhanced';
+    const params = new URLSearchParams({
+      chromaKey: settings.chromaKey,
+      lang: settings.selectedLanguages[0] || 'en'
+    });
+    return `${baseUrl}?${params.toString()}`;
+  };
+
+  // Get OBS URL (legacy)
   const getOverlayUrl = (isForViewer = false) => {
     const params = new URLSearchParams({
       fontSize: settings.fontSize.toString(),
@@ -560,14 +670,16 @@ export default function MobileDashboard() {
   };
 
   const copyOverlayUrl = () => {
-    navigator.clipboard.writeText(getOverlayUrl(true));
-    toast.success('OBS URL 복사됨!');
+    navigator.clipboard.writeText(getEnhancedOBSUrl());
+    toast.success('Enhanced OBS URL 복사됨!');
   };
 
-  // Open OBS window
+  // Open OBS window - Using enhanced overlay
   const openOBSWindow = () => {
     // Save current state to localStorage
     localStorage.setItem('show_original', 'true');
+    localStorage.setItem('obs_show_translation', 'true');
+    localStorage.setItem('obs_translation_lang', settings.selectedLanguages[0] || 'en');
     
     if (overlayMode === 'mobile') {
       // TikTok Live용 540x960 창 (1080x1920 컨텐츠를 0.5 스케일로 표시)
@@ -575,7 +687,7 @@ export default function MobileDashboard() {
       const targetHeight = Math.min(960, screenHeight - 100);
       const targetWidth = Math.round(targetHeight * 9 / 16); // 9:16 비율 유지
       const windowFeatures = `width=${targetWidth},height=${targetHeight},left=100,top=50,resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no,location=no`;
-      const obsWindow = window.open(getOverlayUrl(true), 'TikTokLiveOverlay', windowFeatures);
+      const obsWindow = window.open(getEnhancedOBSUrl(), 'TikTokLiveOverlay', windowFeatures);
       
       if (obsWindow) {
         // 강제 리사이즈 여러 번 시도
@@ -731,6 +843,10 @@ export default function MobileDashboard() {
             <Button variant="ghost" onClick={() => setOverlayMode(overlayMode === 'mobile' ? 'desktop' : 'mobile')} title={`현재: ${overlayMode === 'mobile' ? '모바일' : '데스크톱'} 모드`}>
               {overlayMode === 'mobile' ? <Smartphone className="w-5 h-5 text-white" /> : <Monitor className="w-5 h-5 text-white" />}
             </Button>
+            <Button onClick={() => setShowTextCustomizer(!showTextCustomizer)} className="bg-blue-600 hover:bg-blue-700" title="텍스트 커스터마이징">
+              <Palette className="w-4 h-4" />
+              텍스트 설정
+            </Button>
             <Button onClick={openOBSWindow} className="bg-green-600 hover:bg-green-700">
               <ExternalLink className="w-4 h-4" />
               OBS 창 열기
@@ -744,6 +860,23 @@ export default function MobileDashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto p-4">
+        {/* Text Customizer Modal */}
+        {showTextCustomizer && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-gray-900 rounded-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-gray-900 p-4 border-b border-gray-700 flex justify-between items-center">
+                <h2 className="text-xl font-bold text-white">텍스트 커스터마이징</h2>
+                <Button onClick={() => setShowTextCustomizer(false)} variant="ghost">
+                  ✕
+                </Button>
+              </div>
+              <div className="p-4">
+                <TextCustomizer />
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Quick Search */}
         <form onSubmit={handleSearch} className="mb-6">
           <div className="relative">
@@ -783,10 +916,46 @@ export default function MobileDashboard() {
                 
                 {/* Song Info */}
                 <div className="flex-1">
-                  <h2 className="text-2xl font-bold text-white mb-1">
-                    {currentSong.title || '노래를 검색하세요'}
-                  </h2>
-                  <p className="text-gray-300 mb-1">{currentSong.artist}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    {editingTitle ? (
+                      <Input
+                        value={tempTitle}
+                        onChange={(e) => setTempTitle(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && saveTitle()}
+                        onBlur={saveTitle}
+                        className="text-2xl font-bold"
+                        autoFocus
+                      />
+                    ) : (
+                      <>
+                        <h2 className="text-2xl font-bold text-white">
+                          {currentSong.title || '제목을 입력하세요'}
+                        </h2>
+                        <button onClick={startEditingTitle} className="text-gray-400 hover:text-white">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mb-1">
+                    {editingArtist ? (
+                      <Input
+                        value={tempArtist}
+                        onChange={(e) => setTempArtist(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && saveArtist()}
+                        onBlur={saveArtist}
+                        className="text-gray-300"
+                        autoFocus
+                      />
+                    ) : (
+                      <>
+                        <p className="text-gray-300">{currentSong.artist || '가수를 입력하세요'}</p>
+                        <button onClick={startEditingArtist} className="text-gray-400 hover:text-white">
+                          <Edit className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                   <p className="text-gray-400 text-sm mb-4">{currentSong.album}</p>
                   
                   {currentSong.title && (
@@ -800,6 +969,14 @@ export default function MobileDashboard() {
                       <Button variant="ghost" onClick={() => fetchAlbumInfo(currentSong.artist, currentSong.title)}>앨범 정보</Button>
                       <Button onClick={() => translateLyrics(currentSong.lyricsLines)} disabled={isTranslating}>
                         {isTranslating ? '번역중...' : '번역'}
+                      </Button>
+                      <Button 
+                        variant="secondary" 
+                        onClick={toggleLyricsVisibility}
+                        title={lyricsHidden ? '가사 표시' : '가사 숨기기'}
+                      >
+                        {lyricsHidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                        {lyricsHidden ? '가사 표시' : '가사 숨기기'}
                       </Button>
                       <Button className="bg-green-600 hover:bg-green-700" onClick={openOBSWindow}>
                         <ExternalLink className="w-3 h-3" /> OBS 시작
@@ -1091,6 +1268,181 @@ export default function MobileDashboard() {
                   ))}
                 </div>
               </div>
+            </Card>
+
+            {/* OBS Position Controls */}
+            <Card className="bg-purple-900/30 border-purple-400/30 p-4">
+              <h4 className="text-white font-semibold mb-3">📍 위치 조정</h4>
+              
+              {/* Lyrics Position */}
+              <div className="mb-4">
+                <label className="text-white text-sm mb-2 block">가사 위치</label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-8">X:</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={settings.lyricsPosition?.x || 50}
+                      onChange={(e) => {
+                        const newPos = { 
+                          x: parseInt(e.target.value), 
+                          y: settings.lyricsPosition?.y || 50 
+                        };
+                        const newSettings = { ...settings, lyricsPosition: newPos };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_lyrics_position', JSON.stringify(newPos));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-10 text-right">
+                      {settings.lyricsPosition?.x || 50}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-8">Y:</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={settings.lyricsPosition?.y || 50}
+                      onChange={(e) => {
+                        const newPos = { 
+                          x: settings.lyricsPosition?.x || 50, 
+                          y: parseInt(e.target.value) 
+                        };
+                        const newSettings = { ...settings, lyricsPosition: newPos };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_lyrics_position', JSON.stringify(newPos));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-10 text-right">
+                      {settings.lyricsPosition?.y || 50}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Title/Artist Position */}
+              <div className="mb-4">
+                <label className="text-white text-sm mb-2 block">제목/가수 위치</label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-8">X:</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={settings.titlePosition?.x || 50}
+                      onChange={(e) => {
+                        const newPos = { 
+                          x: parseInt(e.target.value), 
+                          y: settings.titlePosition?.y || 10 
+                        };
+                        const newSettings = { ...settings, titlePosition: newPos };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_title_position', JSON.stringify(newPos));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-10 text-right">
+                      {settings.titlePosition?.x || 50}%
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-8">Y:</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={settings.titlePosition?.y || 10}
+                      onChange={(e) => {
+                        const newPos = { 
+                          x: settings.titlePosition?.x || 50, 
+                          y: parseInt(e.target.value) 
+                        };
+                        const newSettings = { ...settings, titlePosition: newPos };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_title_position', JSON.stringify(newPos));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-10 text-right">
+                      {settings.titlePosition?.y || 10}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Text Size Controls */}
+              <div>
+                <label className="text-white text-sm mb-2 block">텍스트 크기</label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-12">가사:</span>
+                    <input
+                      type="range"
+                      min="50"
+                      max="300"
+                      step="10"
+                      value={settings.textSizes?.originalSize || 200}
+                      onChange={(e) => {
+                        const newSizes = { 
+                          originalSize: parseInt(e.target.value), 
+                          translationSize: settings.textSizes?.translationSize || 160 
+                        };
+                        const newSettings = { ...settings, textSizes: newSizes };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_text_size', JSON.stringify(newSizes));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-14 text-right">
+                      {settings.textSizes?.originalSize || 200}px
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-12">번역:</span>
+                    <input
+                      type="range"
+                      min="40"
+                      max="250"
+                      step="10"
+                      value={settings.textSizes?.translationSize || 160}
+                      onChange={(e) => {
+                        const newSizes = { 
+                          originalSize: settings.textSizes?.originalSize || 200, 
+                          translationSize: parseInt(e.target.value) 
+                        };
+                        const newSettings = { ...settings, textSizes: newSizes };
+                        updateSettings(newSettings);
+                        localStorage.setItem('obs_text_size', JSON.stringify(newSizes));
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-gray-300 w-14 text-right">
+                      {settings.textSizes?.translationSize || 160}px
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Reset Button */}
+              <button
+                onClick={() => {
+                  const defaultPos = { lyricsPosition: { x: 50, y: 50 }, titlePosition: { x: 50, y: 10 }, textSizes: { originalSize: 200, translationSize: 160 } };
+                  updateSettings({ ...settings, ...defaultPos });
+                  localStorage.setItem('obs_lyrics_position', JSON.stringify({ x: 50, y: 50 }));
+                  localStorage.setItem('obs_title_position', JSON.stringify({ x: 50, y: 10 }));
+                  localStorage.setItem('obs_text_size', JSON.stringify({ originalSize: 200, translationSize: 160 }));
+                  toast.success('위치와 크기가 초기화되었습니다');
+                }}
+                className="w-full mt-3 py-2 bg-gray-600/50 hover:bg-gray-600/70 text-white rounded-lg text-sm"
+              >
+                초기값으로 리셋
+              </button>
             </Card>
 
             {/* OBS Quick Actions */}
