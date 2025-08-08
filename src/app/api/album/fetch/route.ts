@@ -87,12 +87,13 @@ export async function POST(request: NextRequest) {
       const jp = multi['jp'];
       let artistDisplay = artist;
       let titleDisplay = title;
+      const toUpperTight = (s?: string) => (s || '').replace(/\s+/g, '').toUpperCase();
       if (script === 'ko') {
-        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${en.artistName})`;
-        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${en.trackName})`;
+        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${toUpperTight(en.artistName)})`;
+        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${toUpperTight(en.trackName)})`;
       } else if (script === 'ja') {
-        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${en.artistName})`;
-        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${en.trackName})`;
+        if (en?.artistName && en.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${toUpperTight(en.artistName)})`;
+        if (en?.trackName && en.trackName.toLowerCase() !== title.toLowerCase()) titleDisplay = `${title} (${toUpperTight(en.trackName)})`;
       } else {
         // 영어 입력 등: 일본어가 있으면 병기
         if (jp?.artistName && jp.artistName.toLowerCase() !== artist.toLowerCase()) artistDisplay = `${artist} (${jp.artistName})`;
