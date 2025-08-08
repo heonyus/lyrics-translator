@@ -80,24 +80,24 @@ async function llmDisplayMap(
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    const toUpperTight = (s?: string) => (s || '').replace(/\s+/g, '').toUpperCase();
+    const toLowerTight = (s?: string) => (s || '').replace(/\s+/g, '').toLowerCase();
     const prompt = [
       'You are a formatter for song metadata display. Return JSON only.',
       'Rules:',
       '- Keep ORIGINAL script as-is.',
-      '- Append an ASCII English uppercase form in parentheses, with no spaces, e.g. "호시노겐(HOSHINOGEN)", "星野源(HOSHINOGEN)", "محمد عبد الوهاب(MOHAMMADABDALWAHHAB)", "แสตมป์อภิวัชร์(STAMPAPIWAT)".',
+      '- Append an ASCII English lowercase form in parentheses, with no spaces, e.g. "호시노겐(hoshinogen)", "星野源(hoshinogen)", "محمد عبد الوهاب(mohammadabdalwahhab)", "แสตมป์อภิวัชร์(stampapiwat)".',
       '- Use provided English candidates if they exist; otherwise romanize accurately.',
       '- Never add explanations. Output strictly:\n{"artistDisplay":"...","titleDisplay":"..."}',
       '',
       'Few-shots:',
       'Input: artist="호시노겐", title="코이", enArtist="Hoshino Gen", enTitle="Koi"',
-      'Output: {"artistDisplay":"호시노겐(HOSHINOGEN)","titleDisplay":"코이(KOI)"}',
+      'Output: {"artistDisplay":"호시노겐(hoshinogen)","titleDisplay":"코이(koi)"}',
       'Input: artist="星野源", title="恋", enArtist="Hoshino Gen", enTitle="Koi"',
-      'Output: {"artistDisplay":"星野源(HOSHINOGEN)","titleDisplay":"恋(KOI)"}',
+      'Output: {"artistDisplay":"星野源(hoshinogen)","titleDisplay":"恋(koi)"}',
       'Input: artist="محمد عبد الوهاب", title="الحب", enArtist="Mohammad Abd Al Wahhab", enTitle="Al Hubb"',
-      'Output: {"artistDisplay":"محمد عبد الوهاب(MOHAMMADABDALWAHHAB)","titleDisplay":"الحب(ALHUBB)"}',
+      'Output: {"artistDisplay":"محمد عبد الوهاب(mohammadabdalwahhab)","titleDisplay":"الحب(alhubb)"}',
       'Input: artist="แสตมป์ อภิวัชร์", title="ใจอ้วน", enArtist="Stamp Apiwat", enTitle="Jai Uan"',
-      'Output: {"artistDisplay":"แสตมป์ อภิวัชร์(STAMPAPIWAT)","titleDisplay":"ใจอ้วน(JAIUAN)"}',
+      'Output: {"artistDisplay":"แสตมป์ อภิวัชร์(stampapiwat)","titleDisplay":"ใจอ้วน(jaiuan)"}',
       '',
       `Input: artist="${artist}", title="${title}", enArtist="${enArtist || ''}", enTitle="${enTitle || ''}"`,
       'Output:'
@@ -111,10 +111,10 @@ async function llmDisplayMap(
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
     if (!parsed?.artistDisplay || !parsed?.titleDisplay) return null;
     // Ensure uppercase inside parens
-    const up = (s: string) => s.replace(/\(([^)]+)\)/, (_m, p1) => `(${toUpperTight(p1)})`);
+    const lo = (s: string) => s.replace(/\(([^)]+)\)/, (_m, p1) => `(${toLowerTight(p1)})`);
     return {
-      artistDisplay: up(String(parsed.artistDisplay)),
-      titleDisplay: up(String(parsed.titleDisplay))
+      artistDisplay: lo(String(parsed.artistDisplay)),
+      titleDisplay: lo(String(parsed.titleDisplay))
     };
   } catch {
     return null;

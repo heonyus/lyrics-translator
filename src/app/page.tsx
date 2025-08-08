@@ -257,8 +257,9 @@ export default function MobileDashboard() {
         if (resp.ok) {
           const data = await resp.json();
           if (data?.success && data.albumInfo?.artistDisplay && data.albumInfo?.titleDisplay) {
-            artist = data.albumInfo.artistDisplay.replace(/\([^)]*\)$/, '').trim();
-            title = data.albumInfo.titleDisplay.replace(/\([^)]*\)$/, '').trim();
+            // 괄호 안 영문은 소문자로 저장되므로, 내부 영문만 () 제거 후 소문자 유지
+            artist = data.albumInfo.artistDisplay.replace(/\(([^)]*)\)$/, (_m: any, p1: string) => `(${p1.toLowerCase()})`).replace(/\([^)]*\)$/, '').trim();
+            title = data.albumInfo.titleDisplay.replace(/\(([^)]*)\)$/, (_m: any, p1: string) => `(${p1.toLowerCase()})`).replace(/\([^)]*\)$/, '').trim();
           }
         }
       } catch {}
