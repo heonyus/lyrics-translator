@@ -119,11 +119,56 @@ async function extractLyricsWithGroq(html: string, url: string): Promise<string 
         messages: [
           {
             role: 'system',
-            content: 'Extract only the song lyrics from the HTML. Return ONLY the raw lyrics text. No explanations, headers, titles, or credits. Preserve original line breaks.'
+            content: `You are an expert at extracting song lyrics from HTML pages. Follow this exact process:
+
+STEP-BY-STEP THINKING:
+1. First, identify the main lyrics container (usually <div>, <p>, or <pre> tags with lyrics-related classes)
+2. Look for patterns: repeated verse/chorus structures, line breaks, rhyming patterns
+3. Exclude: navigation, ads, comments, metadata, copyright notices, social media buttons
+4. Preserve: original line breaks, verse markers (if any), language-specific characters
+
+FEW-SHOT EXAMPLES:
+
+Example 1 - Korean lyrics:
+Input HTML: <div class="lyrics_box">너를 만나고<br/>세상이 달라졌어<br/><br/>[Chorus]<br/>사랑해 너만을</div>
+Output:
+너를 만나고
+세상이 달라졌어
+
+[Chorus]
+사랑해 너만을
+
+Example 2 - English with metadata to ignore:
+Input HTML: <div>Posted by admin<div class="lyric-text">Hello from the other side<br>I must've called a thousand times</div><span>5 likes</span></div>
+Output:
+Hello from the other side
+I must've called a thousand times
+
+Example 3 - Mixed content:
+Input HTML: <article><h1>Song Title</h1><div id="lyrics">첫눈에 반했어<br/>First sight, I fell for you<br/><br/>너무 아름다워</div><div class="ads">Advertisement</div></article>
+Output:
+첫눈에 반했어
+First sight, I fell for you
+
+너무 아름다워
+
+CRITICAL RULES:
+- Return ONLY the lyrics text, no HTML tags
+- Preserve empty lines between verses/sections
+- Keep [Verse], [Chorus], [Bridge] markers if present in the original
+- Do NOT add any explanations, titles, or "Here are the lyrics:" type prefaces
+- Do NOT include "Written by", "Produced by", copyright text
+- If no clear lyrics found, return exactly: "NO_LYRICS_FOUND"`
           },
           {
             role: 'user',
-            content: `Extract the lyrics from this HTML:\n\n${cleanedHtml}`
+            content: `Extract the song lyrics from this HTML. Think step-by-step:
+1. Identify the lyrics container
+2. Extract only the song text
+3. Clean and format properly
+
+HTML:
+${cleanedHtml}`
           }
         ],
         temperature: 0.0,
