@@ -159,7 +159,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, albumInfo: { ...preferred, artistDisplay, titleDisplay, artistEn: en?.artistName, titleEn: en?.trackName, artistJa: jp?.artistName, titleJa: jp?.trackName } });
     }
 
-    // 2) 실패 시 graceful degrade
+    // 2) iTunes 미스: 그래도 LLM으로 표기 매핑 제공 (커버/앨범은 공란)
+    const llm = await llmDisplayMap(artist, title, undefined, undefined);
+    if (llm) {
+      timer.skip('No iTunes data; returned LLM display mapping');
+      return NextResponse.json({
+        success: true,
+        albumInfo: {
+          album: '',
+          coverUrl: '',
+          releaseDate: '',
+          genre: '',
+          trackNumber: 0,
+          artistDisplay: llm.artistDisplay,
+          titleDisplay: llm.titleDisplay,
+        },
+      });
+    }
+
+    // 3) 최종 그레이스풀 디그레이드
     timer.skip('No album info found');
     return NextResponse.json({
       success: true,

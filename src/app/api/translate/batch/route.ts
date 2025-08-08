@@ -84,9 +84,9 @@ export async function POST(request: NextRequest) {
     
     const targetLang = languageMap[targetLanguage] || targetLanguage;
     const isPronounce = String(task || '').toLowerCase() === 'pronounce';
-    const hasGroq = !!GROQ_API_KEY;
-    const hasOpenAI = !!OPENAI_API_KEY;
-    const hasGoogle = !!GOOGLE_API_KEY;
+    const hasGroq = false; // archived as primary
+    const hasOpenAI = !!OPENAI_API_KEY; // primary gpt-5
+    const hasGoogle = !!GOOGLE_API_KEY; // only for backup (v2) or gemini fallback
     
     // Try OpenAI gpt-5 first for translation (not pronounce)
     try {
@@ -158,82 +158,10 @@ export async function POST(request: NextRequest) {
       });
 
     } catch (openaiError) {
-      // Fallback to Groq (if available, not pronounce cooling) or continue chain
+      // Fallback: Groq archived → Skip directly to Gemini (callback/backup)
       try {
-        if (!hasGroq || isPronounce || !isGroqAvailable()) throw new Error('Skip Groq');
-        logger.api('Groq Translate', 'start', `${isPronounce ? 'Pronounce' : 'Translate'} Target=${targetLang} Lines=${lines.length}`);
-        let data: any = null;
-        const MAX_ATTEMPTS = 3;
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-          const response = await scheduleGroq(() => fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${GROQ_API_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: GROQ_MODEL,
-                messages: [
-                  {
-                    role: 'system',
-                    content: [
-                      {
-                        type: 'text',
-                        text: isPronounce
-                          ? `You are a professional pronunciation transcriber for lyrics into Korean Hangul.\n\nStrict rules:\n- Convert each line to its Korean Hangul pronunciation only (phonetic rendering), do NOT translate meaning.\n- Keep line structure; number of lines must match input.\n- Preserve section labels only if they are part of pronunciation; otherwise ignore labels like [Chorus].\n- No explanations or metadata.\n- Output ONLY pronunciations, numbered exactly like input.`
-                          : `You are a professional lyrics translator.\n\nStrict rules:\n- Preserve meaning, tone, and poetic feel.\n- Keep each line structure; number of lines must match input.\n- Preserve proper nouns and artist/title names.\n- Keep parentheses/brackets content unless they are section labels.\n- Do NOT add explanations or metadata.\n- Output ONLY translations, numbered exactly like input.`
-                      }
-                    ]
-                  },
-                  {
-                    role: 'user',
-                    content: isPronounce
-                      ? `${context ? `Context: Song=\"${context.title}\" Artist=\"${context.artist}\".` : ''}\n\nTranscribe the following lyrics to Korean Hangul pronunciation (phonetic rendering). Do NOT translate meaning.\nReturn ONLY the pronunciations, one per line, in the same order as input, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
-                      : `${context ? `Context: Song=\"${context.title}\" Artist=\"${context.artist}\".` : ''}\n\nTranslate the following lyrics to ${targetLang}.\nReturn ONLY the translations, one per line, in the same order as input, numbered 1-${lines.length}.\n\nOriginal lyrics:\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}`
-                  }
-                ],
-                temperature: 0.3,
-                max_tokens: 2000
-              })
-            }));
-          if (!response.ok) {
-            logger.api('Groq Translate', 'fail', `HTTP ${response.status}`);
-            if (response.status === 429) reportGroq429();
-            if ((response.status === 429 || response.status === 503) && attempt < MAX_ATTEMPTS - 1) {
-              const delay = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
-              await new Promise(r => setTimeout(r, delay));
-              continue;
-            }
-            throw new Error(`Groq API error: ${response.status}`);
-          }
-          data = await response.json();
-          break;
-        }
-        if (!data) throw new Error('Groq API failed after retries');
-        const translationText = data.choices[0]?.message?.content?.trim() || '';
-        const translations = translationText
-          .split('\n')
-          .map((line: string) => line.replace(/^\d+\.\s*/, '').trim())
-          .filter((line: string) => line.length > 0);
-        const uniqueTranslations = [...new Set(translations)];
-        if (uniqueTranslations.length === 1 && lines.length > 1) {
-          throw new Error('All translations are identical');
-        }
-        while (translations.length < lines.length) translations.push('...');
-        logger.api('Groq Translate', 'success', `Lines=${lines.length}`);
-        logger.summary(1, 1, Date.now() - overallStart);
-        return NextResponse.json({
-          success: true,
-          translations: translations.slice(0, lines.length),
-          sourceLanguage: 'auto',
-          targetLanguage,
-          source: isPronounce ? 'Groq (Pronunciation)' : 'Groq (Llama 3.3 70B)',
-          model: GROQ_MODEL,
-          task: isPronounce ? 'pronounce' : 'translate'
-        });
-      } catch (groqError) {
-        logger.api('Groq Translate', 'fail', 'Primary provider failed, trying Gemini');
-      }
+        throw new Error('Skip Groq');
+      } catch {}
       
       // Fallback to Gemini 2.5 Flash
       try {

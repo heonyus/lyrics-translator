@@ -245,25 +245,38 @@ export default function MobileDashboard() {
     setSearchResults([]);
     
     try {
-      // Parse search query properly
+      // Parse search query properly using LLM-backed album fetch labeler
       let artist = '';
       let title = '';
-      
-      // Check for " - " separator
-      if (searchQuery.includes(' - ')) {
-        const parts = searchQuery.split(' - ');
-        artist = parts[0].trim();
-        title = parts[1]?.trim() || parts[0].trim();
-      } else {
-        // Try to guess artist and title from single string
-        const words = searchQuery.trim().split(' ');
-        if (words.length >= 2) {
-          // Assume first word(s) might be artist
-          artist = words[0];
-          title = words.slice(1).join(' ');
+      try {
+        const resp = await fetch('/api/album/fetch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artist: searchQuery.trim(), title: searchQuery.trim() })
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.success && data.albumInfo?.artistDisplay && data.albumInfo?.titleDisplay) {
+            artist = data.albumInfo.artistDisplay.replace(/\([^)]*\)$/, '').trim();
+            title = data.albumInfo.titleDisplay.replace(/\([^)]*\)$/, '').trim();
+          }
+        }
+      } catch {}
+      if (!artist || !title) {
+        // fallback heuristic
+        if (searchQuery.includes(' - ')) {
+          const parts = searchQuery.split(' - ');
+          artist = parts[0].trim();
+          title = parts[1]?.trim() || parts[0].trim();
         } else {
-          artist = searchQuery.trim();
-          title = searchQuery.trim();
+          const words = searchQuery.trim().split(' ');
+          if (words.length >= 2) {
+            artist = words[0];
+            title = words.slice(1).join(' ');
+          } else {
+            artist = searchQuery.trim();
+            title = searchQuery.trim();
+          }
         }
       }
       
