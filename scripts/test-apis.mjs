@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Simple API tester for local/prod
+// Simple API tester for local/prod with MCP cache checks
 
 const mode = process.argv[2] || 'local';
 const defaultProd = 'https://lyrics-translator-1mlhr8ffh-heonyus-team.vercel.app';
@@ -31,11 +31,8 @@ async function post(path, body) {
 
 (async () => {
   const tests = [
-    { name: 'LLM Search', path: '/api/lyrics/llm-search', body: { artist, title } },
-    { name: 'Search Engine', path: '/api/lyrics/search-engine', body: { artist, title, engine: 'auto' } },
-    { name: 'Gemini Search', path: '/api/lyrics/gemini-search', body: { artist, title } },
-    { name: 'Smart Scraper V2', path: '/api/lyrics/smart-scraper-v2', body: { artist, title } },
-    { name: 'Smart Scraper V3', path: '/api/lyrics/smart-scraper-v3', body: { query: `${artist} - ${title}` } },
+    { name: 'MCP Lyrics (miss→fill)', path: '/api/lyrics/mcp', body: { artist, title, bypassCache: true } },
+    { name: 'MCP Lyrics (cache-hit)', path: '/api/lyrics/mcp', body: { artist, title } },
   ];
 
   for (const t of tests) {

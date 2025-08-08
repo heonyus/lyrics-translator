@@ -15,7 +15,8 @@ type SecretProvider =
   | 'github'
   | 'figma'
   | 'vercel'
-  | 'supabase';
+  | 'supabase'
+  | 'firecrawl';
 
 export interface SecretRecord {
   id: string;
@@ -90,6 +91,7 @@ export async function getSecret(provider: SecretProvider, keyName = 'api_key'): 
     figma: process.env.FIGMA_TOKEN,
     vercel: process.env.VERCEL_TOKEN,
     supabase: process.env.SUPABASE_SERVICE_ROLE,
+    firecrawl: process.env.FIRECRAWL_API_KEY,
   };
   const fromEnv = envMap[provider];
   if (fromEnv) {

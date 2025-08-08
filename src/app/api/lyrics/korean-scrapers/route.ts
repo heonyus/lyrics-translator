@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
+import { searchBugs, searchMelon, searchGenie } from './utils';
 
 // Extract text from HTML preserving line breaks
 function extractTextFromHTML(html: string): string {

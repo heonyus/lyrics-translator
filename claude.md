@@ -9,6 +9,36 @@ OBS 스트리밍용 실시간 가사 오버레이 프로그램입니다. 크로�
 - **크로마키**: 녹색 배경(#00FF00)으로 OBS에서 쉽게 제거 가능
 - **스마트 캐싱**: Supabase를 통한 가사/번역 저장으로 API 호출 최소화
 
+## 📅 2025-08-07 작업 내역 (Hotfix) - LLM 검색 안정화 & 보안 키 관리 ✅
+
+### 1. LLM 가사 검색 안정화
+- **Claude**: Messages API 요청 포맷을 `content: [{ type: 'text', text }]`로 수정 → 400 오류 감소
+- **Perplexity**: 기본 `sonar-medium-online` 사용, 400/429 시 `sonar-small-online`로 폴백 + 대기 후 재시도
+- **GPT/Groq**: 호출을 병렬 → 순차 + 지터(150~350ms)로 변경하여 레이트리밋 완화
+- **결과 처리**: 200자 이상 본문만 유효로 간주, JSON 파싱 실패 시 텍스트 본문 폴백
+
+### 2. 검색 엔진 경로 개선(`/api/lyrics/search-engine`)
+- **URL 검색**: Perplexity에 “URLs only” 프롬프트 적용, 400/429 폴백 추가, `sonar-medium-online` 기본화
+- **페이지 추출**: Groq(LLM)로 HTML에서 가사만 추출, 순차 처리 + 소량 지연으로 안정성 확보
+
+### 3. 보안 키 관리
+- **로컬 암호화 파일**: `.secrets.enc.json`(AES-256-GCM) 생성 스크립트 추가 → `scripts/secure/write-local-secrets.mjs`
+- **런타임 로더**: `getSecret()`이 ENV → Supabase → 로컬 암호화 파일 순으로 키 로딩(`src/lib/secure-secrets.ts`)
+- **주의**: 키/암호화 파일은 절대 커밋 금지. 배포 환경에서는 ENV 또는 Supabase 사용 권장
+
+### 4. UI 정리(메인)
+- `src/app/page.tsx`에서 공통 UI 컴포넌트(`Button`,`Card`,`Input`) 적용으로 시각 일관성 개선
+
+### 5. 로그 결과(예시)
+- LRCLIB/Genimi/Groq 성공률↑, Perplexity/Claude 400 빈도↓, Smart Scraper V3 종합 성공
+
+### 변경 파일(핵심)
+- `src/app/api/lyrics/llm-search/route.ts`
+- `src/app/api/lyrics/llm-search/utils.ts`
+- `src/app/api/lyrics/search-engine/utils.ts`
+- `src/lib/crypto.ts`, `src/lib/secure-secrets.ts`
+- `scripts/secure/write-local-secrets.mjs`, `infra/db/secure_secrets.sql`
+
 ## 📅 2025-08-08 작업 내역 (Part 2) - TikTok Live 오버레이 완성 ✅
 
 ### 🎯 **TikTok Live 모바일 오버레이 최적화**

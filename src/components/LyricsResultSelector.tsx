@@ -114,12 +114,8 @@ export default function LyricsResultSelector({
     return langMap[language || ''] || '🌍 Unknown';
   };
   
-  // Preview lyrics (first 10 lines)
-  const getPreview = (lyrics: string, lines: number = 10) => {
-    const lyricsLines = lyrics.split('\n').filter(l => l.trim());
-    return lyricsLines.slice(0, lines).join('\n') + 
-           (lyricsLines.length > lines ? '\n...' : '');
-  };
+  // Preview full lyrics (scrollable)
+  const getFull = (lyrics: string) => lyrics;
   
   return (
     <div className="w-full max-w-6xl mx-auto p-4">
@@ -246,11 +242,11 @@ export default function LyricsResultSelector({
                 </CardHeader>
                 
                 <CardContent>
-                  <ScrollArea className="h-[300px] w-full">
+                  <ScrollArea className="h-[420px] w-full">
                     <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono">
                       {previewMode === 'synced' && selectedResult.syncedLyrics
-                        ? getPreview(selectedResult.syncedLyrics, 20)
-                        : getPreview(selectedResult.lyrics, 20)}
+                        ? getFull(selectedResult.syncedLyrics)
+                        : getFull(selectedResult.lyrics)}
                     </pre>
                   </ScrollArea>
                   

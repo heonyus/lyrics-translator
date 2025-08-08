@@ -141,7 +141,43 @@ export default function MobileDashboard() {
     };
 
     const tasks: Array<Promise<void>> = [];
-    // smart-scraper-v3
+    // Always run multiple providers in parallel (fastest wins): MCP + Korean scrapers + consolidate optional
+    {
+      const c = addController();
+      (async () => {
+        try {
+          const res = await fetch('/api/lyrics/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title, query }), signal: c.signal });
+          const json = await res.json().catch(()=>null);
+          enqueue(adaptResults('mcp', json));
+          if (json?.result?.albumInfo) {
+            setCurrentSong(prev => ({ ...prev, album: json.result.albumInfo.album || prev.album, coverUrl: json.result.albumInfo.coverUrl || prev.coverUrl }));
+          }
+        } catch {}
+      })();
+    }
+    {
+      const c = addController();
+      (async () => {
+        try {
+          const res = await fetch('/api/lyrics/korean-scrapers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
+          const json = await res.json().catch(()=>null);
+          enqueue(adaptResults('kr', json));
+        } catch {}
+      })();
+    }
+    {
+      const c = addController();
+      (async () => {
+        try {
+          // consolidate는 기존 결과 묶음에 쓰이므로, 일단 페이지에서는 사용 안 하지만 placeholder
+          const res = await fetch('/api/lyrics/consolidate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results: [], artist, title }), signal: c.signal });
+          const json = await res.json().catch(()=>null);
+          enqueue(adaptResults('consolidate', json));
+        } catch {}
+      })();
+    }
+
+    // smart-scraper-v3 (기존 유지)
     tasks.push((async () => {
       const c = addController();
       try {
@@ -150,16 +186,7 @@ export default function MobileDashboard() {
         enqueue(adaptResults('v3', json));
       } catch {}
     })());
-    // korean scrapers
-    tasks.push((async () => {
-      const c = addController();
-      try {
-        const res = await fetch('/api/lyrics/korean-scrapers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist, title }), signal: c.signal });
-        const json = await res.json().catch(()=>null);
-        enqueue(adaptResults('kr', json));
-      } catch {}
-    })());
-    // llm-search
+    // llm-search (기존 유지)
     tasks.push((async () => {
       const c = addController();
       try {
@@ -325,7 +352,7 @@ export default function MobileDashboard() {
     localStorage.removeItem('current_pronunciations');
     setPronunciations(null);
     
-    toast.success(`🎵 ${result.source || 'Smart Scraper'}에서 가사를 찾았습니다!`);
+    toast.success(`🎵 ${result.source || 'Smart Scraper'}에서 가사를 찾았습니다! 이후 도착하는 결과는 무시됩니다.`);
     
     // Auto fetch album info
     fetchAlbumInfo(song.artist, song.title);
