@@ -489,6 +489,49 @@ const sourcePriority = {
 }
 ```
 
+## 📅 2025-08-09 작업 내역 - 검색 엔진 전면 리팩토링 & 품질 보증 ✅
+
+### 🔥 왜 개선됐나? (원인 → 개선)
+- **원인 1: LLM 결과 과잉 의존** → 사이트/DB 우선화로 전환(Bugs/Melon/Genie, LRCLIB)
+- **원인 2: 중복·비가사 URL 유입** → 허용 도메인 화이트리스트 + 중복 제거 + 검색/카테고리 URL 차단
+- **원인 3: Groq 429 빈발** → 사이트별 직접 파서 우선(Genie/Bugs/Melon), Groq는 최후 fallback
+- **원인 4: 조기 타임아웃/조기 토스트** → 글로벌 타임아웃 제거, 프론트에서 응답 즉시 본문 적용
+- **원인 5: 품질 선택 기준 빈약** → 길이/출처/교차일치/검증 보너스 합성 스코어로 최종 선택
+
+### 🔩 무엇을 리팩토링했나?
+- 백엔드
+  - `src/app/api/lyrics/ultimate-search/engine.ts` 신설: 3단계 파이프라인
+    1) 한국 공식 사이트 파서(Bugs/Melon/Genie)
+    2) Perplexity + Groq 검색엔진
+    3) LRCLIB 직접 조회(타임스탬프)
+  - `src/app/api/lyrics/ultimate-search/route.ts`
+    - 기존 내부 `ultimateSearch`를 `runUltimateEngine()` 호출로 대체
+    - 결과를 통합하여 프런트에 일관된 형태로 전달
+  - `src/app/api/lyrics/search-engine/utils.ts`
+    - 허용 도메인 화이트리스트 + 중복 URL 제거
+    - URL 순차 처리 시 지수 백오프(1s→2s→4s), Perplexity 429/400 3회 재시도
+    - 사이트별 파서 우선: Genie/Bugs/Melon은 Groq 호출 없이 직접 가사 추출
+
+- 프런트
+  - `src/app/page.tsx`
+    - 서버 응답 시 `currentSong`에 즉시 본문 가사를 적용(전체 가사 바로 로딩)
+    - 후보 응답(`candidate`)과 일반 결과 배열(`results`)도 반영
+    - 조기 "검색 결과 없음" 토스트 제거
+    - 번역 요청 메서드 중복 지정 제거
+
+### 🧪 검증 (통합 테스트)
+`test-ultimate-search.mjs`에 5곡 추가:
+- 크러쉬 – Beautiful (LRCLIB, 타임스탬프 O)
+- 星野源 – 恋 (Bugs, 1773 chars)
+- 아이유 – 복숭아 (Bugs, 431 chars)
+- 백예린 – Square (Bugs, 2587 chars)
+- 멜로망스 – 선물 (LRCLIB, 타임스탬프 O)
+
+### 📈 체감 변화
+- 전체 가사 로딩 보장(정상 케이스) + 한국 곡 정확도 상승
+- Groq 429 영향 최소화, 불안정한 LLM 단일 의존 제거
+- 사용자 UI에서 검색 직후 전체 가사 즉시 출력
+
 ## 🎯 검색 시스템 성능 지표
 
 | 지표 | 이전 (LLM 생성) | 현재 (실제 검색) |

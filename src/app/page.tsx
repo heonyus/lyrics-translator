@@ -203,8 +203,23 @@ export default function MobileDashboard() {
           metadata: data.metadata
         };
         
-        // Set main result
+        // Set list for UI
         setSearchResults([mainResult]);
+
+        // Auto-apply the best (main) result so 전체 가사가 즉시 표시됨
+        setCurrentSong({
+          title: data.title || searchQuery.split(' - ')[1] || searchQuery || '',
+          artist: data.artist || searchQuery.split(' - ')[0] || '',
+          album: data.metadata?.album || '',
+          coverUrl: data.metadata?.coverUrl || '',
+          lyrics: data.lyrics,
+          lyricsLines: data.lyrics.split('\n').filter((l: string) => l.trim())
+        });
+        setEditedLyrics(data.lyrics);
+        localStorage.setItem('current_title', data.title || '');
+        localStorage.setItem('current_artist', data.artist || '');
+        localStorage.setItem('current_lrc', data.lyrics);
+        localStorage.setItem('current_line_index', '0');
         
         // Add alternatives if available
         if (data.alternatives && Array.isArray(data.alternatives)) {
@@ -232,7 +247,33 @@ export default function MobileDashboard() {
         }
         
         console.log(`✅ Ultimate Search found ${data.totalResults} results`);
-        toast.success(`${data.totalResults}개 소스에서 가사를 찾았습니다`);
+        toast.success('가사를 불러왔습니다');
+      } else if (data.candidate) {
+        // Server returned a fallback candidate (200 OK) -> show preview instead of "no results"
+        const preview = (data.candidate.preview || '').toString();
+        if (preview) {
+          setSearchResults([{
+            source: data.candidate.source || 'fallback',
+            lyrics: preview,
+            confidence: 0.5,
+            hasTimestamps: false,
+            isPreview: true
+          }]);
+          toast.info('검증 미통과 결과가 있어 미리보기를 표시합니다');
+        } else {
+          toast.error('가사를 찾을 수 없습니다');
+        }
+      } else if (Array.isArray(data.results) && data.results.length > 0) {
+        // Generic results shape fallback
+        const normalized = adaptResults('ultimate', data).map((r: any) => ({
+          source: r.source,
+          lyrics: r.lyrics || '',
+          confidence: r.confidence || 0.5,
+          hasTimestamps: !!r.hasTimestamps,
+          isPreview: !r.lyrics || r.lyrics.length < 200
+        }));
+        setSearchResults(normalized);
+        toast.success(`${normalized.length}개 소스에서 가사를 찾았습니다`);
       } else {
         console.warn('No lyrics found from Ultimate Search');
         toast.error('가사를 찾을 수 없습니다');
@@ -344,12 +385,7 @@ export default function MobileDashboard() {
       // Fire providers in parallel and append as they arrive
       await parallelSearch(artist, title, searchQuery, false);
       
-      // Check if we got any results
-      setTimeout(() => {
-        if (searchResults.length === 0 && !isSearching) {
-          toast.info('검색 결과가 없습니다. 다른 검색어를 시도해보세요.');
-        }
-      }, 1000);
+      // 제거: 조기 "검색 결과 없음" 토스트 (서버 응답 마무리 이후에만 판단)
     } catch (error) {
       console.error('Search error:', error);
       if (error instanceof Error) {
@@ -586,7 +622,6 @@ export default function MobileDashboard() {
       const translationPromises = targetLangs.map(async (lang) => {
         // Use GPT-5 for better quality translations
         const response = await fetch('/api/translate/gpt5', {
-          method: 'PUT',  // PUT for batch translation
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

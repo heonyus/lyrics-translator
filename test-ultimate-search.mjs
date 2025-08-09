@@ -5,10 +5,11 @@ async function testUltimateSearch() {
   console.log('🧪 Testing Ultimate Search API...');
   
   const tests = [
-    { artist: 'IU', title: 'Good Day' },
-    { artist: '아이유', title: '좋은날' },
-    { artist: 'BTS', title: 'Dynamite' },
-    { artist: '星野源', title: '恋' }
+    { artist: '크러쉬', title: 'Beautiful' },
+    { artist: '星野源', title: '恋' },
+    { artist: '아이유', title: '복숭아' },
+    { artist: '백예린', title: 'Square' },
+    { artist: '멜로망스', title: '선물' }
   ];
   
   for (const test of tests) {
@@ -36,6 +37,10 @@ async function testUltimateSearch() {
         console.log(`     Total results: ${data.totalResults}`);
         if (data.alternatives) {
           console.log(`     Alternatives: ${data.alternatives.length}`);
+        }
+        // Fail the test if lyrics are suspiciously short
+        if (data.lyrics.length < 250) {
+          console.error('  ❌ Lyrics too short (<250 chars)');
         }
       } else if (data.error) {
         console.error(`  ❌ Error: ${data.error}`);

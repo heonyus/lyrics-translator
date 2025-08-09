@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
+import { runUltimateEngine } from './engine';
 import { getSecret } from '@/lib/secure-secrets';
 import { searchEngine } from '../search-engine/utils';
 // Simplified multilingual display formatting
@@ -44,6 +45,47 @@ interface SearchResult {
   hasTimestamps: boolean;
   metadata?: any;
 }
+// Compute simple normalized length score (0..1)
+function computeLengthScore(text: string): number {
+  const len = (text || '').length;
+  // 0 at 100, 1 at 1200+ (smooth ramp)
+  const min = 100;
+  const max = 1200;
+  if (len <= min) return 0;
+  if (len >= max) return 1;
+  return (len - min) / (max - min);
+}
+
+// Lightweight similarity between two lyrics (0..1) using line shingling
+function computeSimilarity(a: string, b: string): number {
+  const norm = (t: string) => t
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\n ]+/gu, ' ')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  const la = new Set(norm(a));
+  const lb = new Set(norm(b));
+  if (la.size === 0 || lb.size === 0) return 0;
+  let inter = 0;
+  la.forEach(line => { if (lb.has(line)) inter++; });
+  const union = la.size + lb.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// Source weight by reliability
+function getSourceWeight(source: string): number {
+  const s = (source || '').toLowerCase();
+  if (s.includes('bugs')) return 1.0;
+  if (s.includes('melon')) return 0.98;
+  if (s.includes('genie')) return 0.96;
+  if (s.includes('lrclib')) return 0.9;
+  if (s.includes('search-engine-mw.genie') || s.includes('search-engine-bugs') || s.includes('search-engine-melon')) return 0.94;
+  // LLM direct
+  if (s.includes('perplexity') || s.includes('gemini') || s.includes('gpt')) return 0.5;
+  return 0.6;
+}
+
 
 interface SearchStrategy {
   name: string;
@@ -73,12 +115,18 @@ function detectAIMetaText(text: string): boolean {
   // 패턴 매치 확인
   const hasAIPattern = aiPatterns.some(pattern => pattern.test(text));
   
-  // 추가 휴리스틱: "I", "you" 등 대화체가 많으면 AI 텍스트
+  // 가사 형태(줄바꿈이 많은 다행식 텍스트)는 대화체 휴리스틱을 적용하지 않음(오탐 방지)
+  const lineCount = text.split('\n').filter(l => l.trim()).length;
+  if (lineCount >= 5) {
+    return hasAIPattern;
+  }
+  
+  // 추가 휴리스틱: "I", "you" 등 대화체 비율이 매우 높은 짧은 단락만 의심 (임계치 상향)
   const conversationalWords = (text.match(/\b(I|you|your|we|our|please|would|could|should)\b/gi) || []).length;
   const totalWords = text.split(/\s+/).length;
   const conversationalRatio = conversationalWords / Math.max(totalWords, 1);
   
-  return hasAIPattern || conversationalRatio > 0.1;
+  return hasAIPattern || conversationalRatio > 0.25;
 }
 
 // Enhanced quality validation - 완전한 가사인지 엄격하게 검증
@@ -393,163 +441,33 @@ IMPORTANT REQUIREMENTS:
       } else {
         console.log('[Perplexity] Response seems to be a refusal, checking for URLs to scrape...');
         
-        // If we got URLs in search results, try to fetch from them
+        // If we got URLs in search results, try to fetch from them via shared search-engine extractor
         if (searchResults && searchResults.length > 0) {
           console.log(`[Perplexity] Found ${searchResults.length} URLs, attempting to fetch content...`);
-          
-          // Try to fetch from non-YouTube URLs first (YouTube is harder to scrape)
-          const nonYtUrls = searchResults.filter((r: any) => 
-            !r.url.includes('youtube.com') && 
-            (r.url.includes('lyrics') || r.url.includes('가사') || r.title.toLowerCase().includes('가사'))
-          );
-          
-          if (nonYtUrls.length > 0) {
-            console.log(`[Perplexity] Trying to fetch from ${nonYtUrls[0].url}`);
-            
-            try {
-              // Fetch HTML directly and extract with Groq
-              const htmlResponse = await fetch(nonYtUrls[0].url, {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                  'Accept': 'text/html,application/xhtml+xml',
-                  'Accept-Language': 'ko-KR,ko;q=0.9,en-US,en;q=0.8'
-                }
-              });
-              
-              if (!htmlResponse.ok) {
-                throw new Error(`Failed to fetch ${nonYtUrls[0].url}`);
-              }
-              
-              const html = await htmlResponse.text();
-              console.log(`[Perplexity] Fetched HTML from ${nonYtUrls[0].url}, length: ${html.length}`);
-              
-              // Clean and extract lyrics using Groq
-              const cleanedHtml = html
-                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-                .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
-                .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
-                .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
-                .substring(0, 15000);
-              
-              // Use Groq to extract lyrics
-              const groqApiKey = process.env.GROQ_API_KEY || (await getSecret('groq'));
-              if (!groqApiKey) {
-                throw new Error('Groq API key not available');
-              }
-              
-              const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${groqApiKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: 'openai/gpt-oss-120b',
-                  messages: [
-                    {
-                      role: 'system',
-                      content: `You are an expert at extracting song lyrics from HTML pages. Follow this exact process:
-
-STEP-BY-STEP THINKING:
-1. First, identify the main lyrics container (usually <div>, <p>, or <pre> tags with lyrics-related classes)
-2. Look for patterns: repeated verse/chorus structures, line breaks, rhyming patterns
-3. Exclude: navigation, ads, comments, metadata, copyright notices, social media buttons
-4. Preserve: original line breaks, verse markers (if any), language-specific characters
-
-FEW-SHOT EXAMPLES:
-
-Example 1 - Korean lyrics:
-Input HTML: <div class="lyrics_box">너를 만나고<br/>세상이 달라졌어<br/><br/>[Chorus]<br/>사랑해 너만을</div>
-Output:
-너를 만나고
-세상이 달라졌어
-
-[Chorus]
-사랑해 너만을
-
-Example 2 - English with metadata to ignore:
-Input HTML: <div>Posted by admin<div class="lyric-text">Hello from the other side<br>I must've called a thousand times</div><span>5 likes</span></div>
-Output:
-Hello from the other side
-I must've called a thousand times
-
-Example 3 - Mixed content:
-Input HTML: <article><h1>Song Title</h1><div id="lyrics">첫눈에 반했어<br/>First sight, I fell for you<br/><br/>너무 아름다워</div><div class="ads">Advertisement</div></article>
-Output:
-첫눈에 반했어
-First sight, I fell for you
-
-너무 아름다워
-
-CRITICAL RULES:
-- Return ONLY the lyrics text, no HTML tags
-- Preserve empty lines between verses/sections
-- Keep [Verse], [Chorus], [Bridge] markers if present in the original
-- Do NOT add any explanations, titles, or "Here are the lyrics:" type prefaces
-- Do NOT include "Written by", "Produced by", copyright text
-- If no clear lyrics found, return exactly: "NO_LYRICS_FOUND"`
-                    },
-                    {
-                      role: 'user',
-                      content: `Extract the song lyrics from this HTML. Think step-by-step:
-1. Identify the lyrics container
-2. Extract only the song text
-3. Clean and format properly
-
-HTML:
-${cleanedHtml}`
-                    }
-                  ],
-                  temperature: 0.0,
-                  max_tokens: 5000
-                })
-              });
-              
-              if (!groqResponse.ok) {
-                throw new Error(`Groq API failed: ${groqResponse.status}`);
-              }
-              
-              const groqData = await groqResponse.json();
-              const extractedLyrics = groqData.choices?.[0]?.message?.content || '';
-              
-              if (extractedLyrics && extractedLyrics !== 'NO_LYRICS_FOUND' && extractedLyrics.length > 100) {
-                console.log(`[Perplexity] Successfully extracted lyrics from ${result.url}: ${extractedLyrics.length} chars`);
-                timer.success(`Extracted from URL (${extractedLyrics.length} chars)`);
-                return {
-                  source: `perplexity-scraped-${new URL(result.url).hostname}`,
-                  lyrics: extractedLyrics,
-                  confidence: 0.85,
-                  hasTimestamps: false,
-                  metadata: {
-                    citations,
-                    searchResults,
-                    scrapedFrom: result.url
-                  }
-                };
-              } else {
-                console.log(`[Perplexity] No valid lyrics found in ${result.url}`);
-              }
-            } catch (scrapeError) {
-              console.error(`[Perplexity] Failed to scrape ${result.url}:`, scrapeError);
-            }
+          // Import shared extractor to avoid duplicating Groq logic and rate-limits
+          const { searchEngine } = await import('../search-engine/utils');
+          // Choose best candidate URL by allowlist + priority handled in searchEngine
+          const engineResult = await searchEngine({ artist, title, engine: 'perplexity' });
+          if (engineResult.success && engineResult.result?.lyrics) {
+            const best = engineResult.result;
+            timer.success(`Extracted via search-engine (${best.source})`);
+            return {
+              source: best.source,
+              lyrics: best.lyrics,
+              confidence: best.confidence || 0.8,
+              hasTimestamps: false,
+              metadata: { citations, searchResults, scrapedFrom: best.url }
+            };
           }
-          
-          // If scraping failed, at least return the URLs found
-          const sourcesInfo = searchResults.map((r: any) => 
-            `• ${r.title}\n  ${r.url}`
-          ).join('\n\n');
-          
+          // Fallback: return the sources list for UI
+          const sourcesInfo = searchResults.map((r: any) => `• ${r.title}\n  ${r.url}`).join('\n\n');
           timer.success(`Found ${searchResults.length} potential sources`);
           return {
             source: 'perplexity-sources',
             lyrics: `Perplexity found these sources but couldn't extract content. You may need to visit them directly:\n\n${sourcesInfo}`,
             confidence: 0.5,
             hasTimestamps: false,
-            metadata: {
-              citations,
-              searchResults
-            }
+            metadata: { citations, searchResults }
           };
         }
       }
@@ -999,7 +917,7 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
   });
   
   // Only skip other groups if we have REALLY good results
-  const hasExcellentResult = allResults.some(r => r.lyrics.length > 1000 && r.confidence > 0.9);
+  const hasExcellentResult = allResults.some(r => r.lyrics.length > 800 && r.confidence > 0.9);
   
   // Always try medium priority unless we have excellent results
   if (!hasExcellentResult) {
@@ -1008,7 +926,7 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
 ⚡ Executing MEDIUM priority group (${priorityGroups.medium.length} strategies)...`);
     
     // Add delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 350));
     
     const mediumPromises = priorityGroups.medium.map(async (strategy) => {
       console.log(`Starting ${strategy.name} search...`);
@@ -1050,7 +968,7 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
 🔍 Executing LOW priority group (${priorityGroups.low.length} strategies)...`);
     
     // Add delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     const lowPromises = priorityGroups.low.map(async (strategy) => {
       console.log(`Starting ${strategy.name} search...`);
@@ -1161,7 +1079,7 @@ export async function POST(req: NextRequest) {
               console.log(`✅ Parsed: Artist="${artist}" Title="${title}"`);
             } else {
               // Fallback parsing
-              const parts = query.split(/[-–—]/).map(p => p.trim());
+              const parts = query.split(/[-–—]/).map((p: string) => p.trim());
               if (parts.length === 2) {
                 artist = parts[0];
                 title = parts[1];
@@ -1193,24 +1111,21 @@ export async function POST(req: NextRequest) {
     logger.info(`[Ultimate Search API] Request received`);
     logger.info(`[Ultimate Search API] Searching for: ${artist} - ${title}`);
     
-    // Try exact match first with timeout
+    // Try exact match first (no global timeout to avoid premature cutoff)
     console.log('\nPhase 1: Exact match search...');
     let results: SearchResult[] = [];
-    
     try {
-      // Overall 35 second timeout for the entire search
-      const searchPromise = ultimateSearch(artist, title);
-      const timeoutPromise = new Promise<SearchResult[]>((resolve) => 
-        setTimeout(() => {
-          console.error('ERROR: Main search timeout (35s)');
-          resolve([]);
-        }, 35000) // Increased to 35s for Perplexity Pro
-      );
-      
-      results = await Promise.race([searchPromise, timeoutPromise]);
+      const engineResults = await runUltimateEngine({ artist, title });
+      results = engineResults.map(r => ({
+        source: r.source,
+        lyrics: r.lyrics,
+        confidence: r.confidence,
+        hasTimestamps: r.hasTimestamps,
+        metadata: r.metadata
+      }));
       console.log(`Phase 1 complete. Found ${results.length} results`);
     } catch (error) {
-      console.error('ERROR in ultimate search:', error);
+      console.error('ERROR in engine search:', error);
       results = [];
     }
     
@@ -1220,26 +1135,24 @@ export async function POST(req: NextRequest) {
       logger.info('Trying title variants...');
       const variants = buildGenericTitleVariants(title);
       console.log('Title variants:', variants);
-      
-      // Skip variant search for now to speed up response
-      // for (const variant of variants) {
-      //   if (variant !== title) {
-      //     results = await ultimateSearch(artist, variant);
-      //     if (results.length > 0) break;
-      //   }
-      // }
+      for (const variant of variants) {
+        if (variant !== title) {
+          const variantResults = await ultimateSearch(artist, variant);
+          results = results.concat(variantResults);
+          if (results.length > 0) break;
+        }
+      }
     }
     
     // If still no results, try with multilingual display format
     if (results.length === 0) {
       console.log('\nPhase 3: Trying multilingual format...');
       logger.info('Trying multilingual format...');
-      // Skip multilingual search for now to speed up response
-      // const { artistDisplay, titleDisplay } = await formatMultilingualDisplay(artist, title);
-      // 
-      // if (artistDisplay !== artist || titleDisplay !== title) {
-      //   results = await ultimateSearch(artistDisplay, titleDisplay);
-      // }
+      const { artistDisplay, titleDisplay } = await formatMultilingualDisplay(artist, title);
+      if (artistDisplay !== artist || titleDisplay !== title) {
+        const multiResults = await ultimateSearch(artistDisplay, titleDisplay);
+        results = results.concat(multiResults);
+      }
     }
     
     if (results.length === 0) {
@@ -1250,8 +1163,15 @@ export async function POST(req: NextRequest) {
     }
     
     // 가사 검증 및 AI 텍스트 필터링
-    const verifiedResults = await Promise.all(
-      results.map(async (result) => {
+    type AugmentedResult = SearchResult & {
+      rejected?: boolean;
+      reason?: string;
+      verified?: boolean;
+      verifyConfidence?: number;
+    };
+
+    const verifiedResults: AugmentedResult[] = await Promise.all(
+      results.map(async (result): Promise<AugmentedResult> => {
         // AI 메타 텍스트 감지
         if (detectAIMetaText(result.lyrics)) {
           console.log(`⚠️ [Ultimate] AI meta text detected in ${result.source}, rejecting`);
@@ -1296,32 +1216,45 @@ export async function POST(req: NextRequest) {
     );
     
     // 거부된 결과 제외
-    const validResults = verifiedResults.filter(r => !r.rejected);
+    const validResults = verifiedResults.filter((r) => !r.rejected);
     
     if (validResults.length === 0) {
+      // 결과가 모두 AI 텍스트로 의심되더라도, 사용자가 확인할 수 있도록 후보 URL/요약을 반환
+      const fallback = results[0];
       return NextResponse.json(
-        { error: 'All results were AI-generated text' },
-        { status: 404 }
+        {
+          error: 'All results were flagged as AI text',
+          hint: '검증을 통과하지 못했지만, 아래 후보를 직접 확인해보세요.',
+          candidate: fallback ? {
+            source: fallback.source,
+            preview: fallback.lyrics.substring(0, 200) + '...'
+          } : null
+        },
+        { status: 200 }
       );
     }
     
-    // 우선순위 기반 선택
-    const sortedResults = validResults.sort((a, b) => {
-      // 1. 한국 사이트 우선 (Bugs, Melon)
-      const aKorean = ['bugs', 'melon', 'genie'].some(site => a.source.includes(site));
-      const bKorean = ['bugs', 'melon', 'genie'].some(site => b.source.includes(site));
-      if (aKorean !== bKorean) return aKorean ? -1 : 1;
-      
-      // 2. 검증 성공 우선
-      if (a.verified !== undefined && b.verified !== undefined) {
-        if (a.verified !== b.verified) return a.verified ? -1 : 1;
+    // 고품질 스코어링 기반 선택 (길이/출처/교차일치/검증 가중치)
+    const withScores = validResults.map((r, idx, arr) => {
+      const lengthScore = computeLengthScore(r.lyrics); // 0..1
+      const sourceWeight = getSourceWeight(r.source);   // 0.5..1.0
+      const verifiedBonus = (r.verified ? 0.1 : 0) + (r.verifyConfidence ? Math.min(r.verifyConfidence / 100, 0.1) : 0);
+      // 교차 일치: 다른 결과들과의 평균 유사도
+      let sim = 0;
+      if (arr.length > 1) {
+        let sum = 0, cnt = 0;
+        for (let i = 0; i < arr.length; i++) {
+          if (i === idx) continue;
+          sum += computeSimilarity(r.lyrics, arr[i].lyrics);
+          cnt++;
+        }
+        sim = cnt > 0 ? sum / cnt : 0;
       }
-      
-      // 3. 신뢰도 순
-      const aConf = a.verifyConfidence || a.confidence;
-      const bConf = b.verifyConfidence || b.confidence;
-      return bConf - aConf;
+      const composite = 0.45 * lengthScore + 0.35 * sourceWeight + 0.2 * sim + verifiedBonus;
+      return { r, composite };
     });
+    withScores.sort((a, b) => b.composite - a.composite);
+    const sortedResults = withScores.map(x => x.r);
     
     const bestCandidate = sortedResults[0];
     
@@ -1346,8 +1279,8 @@ export async function POST(req: NextRequest) {
     console.log(`\n✅ SEARCH COMPLETED in ${totalTime}ms`);
     logger.success(`Ultimate search completed in ${totalTime}ms`);
     
-    // Get alternatives
-    const alternatives = results
+    // Get alternatives with quality ordering
+    const alternatives = sortedResults
       .filter(r => r.source !== bestCandidate.source)
       .slice(0, 4)
       .map(r => ({

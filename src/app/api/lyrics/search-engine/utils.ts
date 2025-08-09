@@ -10,6 +10,28 @@ async function loadKeys() {
   GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY;
 }
 
+// Allowlist of lyrics-related hosts (suffix match)
+const ALLOWED_LYRICS_HOSTS: string[] = [
+  'bugs.co.kr',
+  'melon.com',
+  'genie.co.kr',
+  'flo.co.kr',
+  'genius.com',
+  'azlyrics.com',
+  'lyrics.com',
+  'musixmatch.com',
+  'lyricstranslate.com',
+  'colorcodedlyrics.com',
+  'klyrics.net',
+  'uta-net.com',
+  'utaten.com',
+  'j-lyric.net',
+  'mojim.com',
+  'blog.naver.com',
+  'm.blog.naver.com',
+  'tistory.com',
+];
+
 // Search for lyrics URLs using Perplexity
 async function searchWithPerplexity(artist: string, title: string): Promise<string[]> {
   const timer = new APITimer('Perplexity Search');
@@ -112,9 +134,11 @@ RULES:
     });
     
     if (!response.ok) {
-      // retry on 429/400 with fallback model and jitter
-      if (response.status === 429 || response.status === 400) {
-        await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 400)));
+      // retry on 429/400 with fallback model and jitter (up to 3 attempts)
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const wait = Math.min(400 * Math.pow(2, attempt - 1), 1600) + Math.floor(Math.random() * 300);
+        await new Promise(r => setTimeout(r, wait));
         const retry = await fetch('https://api.perplexity.ai/chat/completions', {
           method: 'POST',
           headers: {
@@ -122,7 +146,7 @@ RULES:
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'sonar-medium-online',
+            model: attempt === maxAttempts ? 'sonar-medium-online' : (process.env.PERPLEXITY_MODEL || 'sonar-reasoning-pro'),
             messages: [
               { 
                 role: 'user', 
@@ -135,18 +159,18 @@ Return only direct song URLs, one per line.`
             max_tokens: 500
           })
         });
-        if (!retry.ok) {
-          timer.fail(`HTTP ${retry.status}`);
+        if (retry.ok) {
+          const retryData = await retry.json();
+          const retryContent = retryData.choices?.[0]?.message?.content || '';
+          const retryUrls = retryContent.match(/https?:\/\/[^\s]+/g) || [];
+          timer.success(`Found ${retryUrls.length} URLs`);
+          return retryUrls;
+        }
+        if (attempt === maxAttempts) {
+          timer.fail(`HTTP ${response.status}`);
           return [];
         }
-        const retryData = await retry.json();
-        const retryContent = retryData.choices?.[0]?.message?.content || '';
-        const retryUrls = retryContent.match(/https?:\/\/[^\s]+/g) || [];
-        timer.success(`Found ${retryUrls.length} URLs`);
-        return retryUrls;
       }
-      timer.fail(`HTTP ${response.status}`);
-      return [];
     }
     
     const data = await response.json();
@@ -414,21 +438,80 @@ async function fetchAndExtractLyrics(url: string): Promise<any | null> {
     console.log(`📄 [URL Fetch] HTML received: ${html.length} bytes`);
     console.log(`📄 [URL Fetch] HTML snippet: "${html.substring(0, 100).replace(/\n/g, ' ')}..."`);
     
-    // Check if this is actually a lyrics page
-    const looksLikeLyrics = html.includes('lyrics') || 
-                           html.includes('가사') || 
-                           html.includes('歌詞') ||
-                           html.includes('verse') ||
-                           html.includes('chorus');
-    
+    const hostname = new URL(url).hostname.toLowerCase();
+    // Site-specific fast parsers (avoid Groq when possible)
+    const trySiteSpecificParse = (): string | null => {
+      const pick = (m: RegExpMatchArray | null) => (m ? m[1] : null);
+      // Genie
+      if (hostname.endsWith('genie.co.kr')) {
+        const m = html.match(/<pre[^>]*id="pLyrics"[^>]*>([\s\S]*?)<\/pre>/i) ||
+                  html.match(/<div[^>]*class="[^\"]*lyrics[^\"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const raw = pick(m);
+        if (raw) return raw;
+      }
+      // Bugs
+      if (hostname.endsWith('bugs.co.kr')) {
+        const m = html.match(/<div[^>]*class="[^\"]*lyricsContainer[^\"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                  html.match(/<xmp[^>]*>([\s\S]*?)<\/xmp>/i) ||
+                  html.match(/<div[^>]*class="[^\"]*lyricsText[^\"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const raw = pick(m);
+        if (raw) return raw;
+      }
+      // Melon
+      if (hostname.endsWith('melon.com')) {
+        const m = html.match(/<div[^>]*class="[^\"]*lyric[^\"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                  html.match(/<div[^>]*id="d_video_summary"[^>]*>([\s\S]*?)<\/div>/i);
+        const raw = pick(m);
+        if (raw) return raw;
+      }
+      return null;
+    };
+
+    // 1) Try site-specific parsing first
+    const siteRaw = trySiteSpecificParse();
+    if (siteRaw) {
+      const text = siteRaw
+        .replace(/<br\s*\/?>(?=\s*\n?)/gi, '\n')
+        .replace(/<\/(p|div)>/gi, '\n')
+        .replace(/<p[^>]*>/gi, '\n')
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x([0-9A-F]+);/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (_m, dec) => String.fromCharCode(parseInt(dec, 10)));
+      const cleaned = text
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .join('\n');
+      if (cleaned.length > 60) {
+        console.log(`✅ [URL Fetch] Parsed via site-specific rules: ${hostname}, len=${cleaned.length}`);
+        return {
+          lyrics: cleaned,
+          metadata: {},
+          source: hostname.replace('www.', ''),
+          url,
+          confidence: 0.9,
+        };
+      }
+    }
+
+    // 2) Heuristic check before Groq
+    const looksLikeLyrics = html.includes('lyrics') || html.includes('가사') || html.includes('歌詞') || html.includes('verse') || html.includes('chorus');
     if (!looksLikeLyrics) {
       console.log(`⚠️ [URL Fetch] Page doesn't look like a lyrics page, skipping extraction`);
       return null;
     }
-    
-    console.log(`✅ [URL Fetch] Page appears to contain lyrics, proceeding with extraction`);
-    
-    // Try to extract lyrics with Groq
+
+    console.log(`✅ [URL Fetch] Page appears to contain lyrics, proceeding with Groq extraction`);
+
+    // 3) Fallback: Try to extract lyrics with Groq
     const result = await extractLyricsWithGroq(html, url);
     
     if (result) {
@@ -503,7 +586,7 @@ export async function searchEngine({
     
     logger.info(`📍 Found ${urls.length} potential URLs`);
   
-  // Filter out non-lyrics URLs
+  // Filter out non-lyrics URLs (and dedupe later)
   const filteredUrls = urls.filter(url => {
     const urlLower = url.toLowerCase();
     const hostname = new URL(url).hostname.toLowerCase();
@@ -515,6 +598,15 @@ export async function searchEngine({
         hostname.includes('soundcloud.com') ||
         hostname.includes('music.amazon.com')) {
       console.log(`🚫 [URL Filter] Excluded streaming platform: ${url}`);
+      return false;
+    }
+
+    // Only allow known lyrics hosts
+    const isAllowedHost = ALLOWED_LYRICS_HOSTS.some(allowed =>
+      hostname === allowed || hostname.endsWith(`.${allowed}`)
+    );
+    if (!isAllowedHost) {
+      console.log(`🚫 [URL Filter] Excluded non-lyrics host: ${url}`);
       return false;
     }
     
@@ -531,9 +623,18 @@ export async function searchEngine({
     console.log(`✅ [URL Filter] Accepted: ${url}`);
     return true;
   });
+
+  // Dedupe by canonical href
+  const seen = new Set<string>();
+  const dedupedUrls = filteredUrls.filter((u) => {
+    const href = new URL(u).href;
+    if (seen.has(href)) return false;
+    seen.add(href);
+    return true;
+  });
   
   // Prioritize known good lyrics sites
-  const prioritizedUrls = filteredUrls.sort((a, b) => {
+  const prioritizedUrls = dedupedUrls.sort((a, b) => {
     const getPriority = (url: string) => {
       const hostname = new URL(url).hostname.toLowerCase();
       if (hostname.includes('bugs.co.kr')) return 0;
@@ -548,7 +649,7 @@ export async function searchEngine({
     return getPriority(a) - getPriority(b);
   });
   
-  console.log(`📊 [URL Filter] Filtered: ${filteredUrls.length}/${urls.length} URLs`);
+  console.log(`📊 [URL Filter] Filtered: ${dedupedUrls.length}/${urls.length} URLs`);
   if (prioritizedUrls.length > 0) {
     console.log(`🎯 [URL Filter] Top priority URL: ${prioritizedUrls[0]}`);
   }
@@ -563,18 +664,20 @@ export async function searchEngine({
   
   // Step 2: Fetch and extract lyrics from each URL SEQUENTIALLY
   console.log(`
-🔄 [Sequential Processing] Starting to process ${Math.min(prioritizedUrls.length, 5)} URLs sequentially...`);
+🔄 [Sequential Processing] Starting to process ${Math.min(prioritizedUrls.length, 3)} URLs sequentially...`);
   
   const results = [];
-  for (let i = 0; i < Math.min(prioritizedUrls.length, 5); i++) {
+  for (let i = 0; i < Math.min(prioritizedUrls.length, 3); i++) {
     const url = prioritizedUrls[i];
     console.log(`
 📍 [Sequential ${i+1}/5] Processing: ${url}`);
     
     // Wait 1 second between each URL to avoid rate limiting
     if (i > 0) {
-      console.log(`⏳ [Sequential] Waiting 1s before next URL...`);
-      await new Promise(r => setTimeout(r, 1000));
+      // Backoff: 1s, 2s, 4s ...
+      const backoff = Math.min(1000 * Math.pow(2, i - 1), 4000);
+      console.log(`⏳ [Sequential] Waiting ${backoff}ms before next URL...`);
+      await new Promise(r => setTimeout(r, backoff));
     }
     
     const result = await fetchAndExtractLyrics(url);
@@ -593,7 +696,7 @@ export async function searchEngine({
   }
   
   console.log(`
-📊 [Sequential Complete] Extracted lyrics from ${results.length}/${Math.min(prioritizedUrls.length, 5)} URLs`);
+📊 [Sequential Complete] Extracted lyrics from ${results.length}/${Math.min(prioritizedUrls.length, 3)} URLs`);
   
   // Collect valid results
   const validResults = results.filter((r: any) => r).map((r: any) => r);
