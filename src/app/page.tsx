@@ -159,7 +159,11 @@ export default function MobileDashboard() {
       const res = await fetch('/api/lyrics/ultimate-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ artist, title }),
+        body: JSON.stringify({ 
+          artist, 
+          title,
+          query // Send original query for better parsing fallback
+        }),
         signal: controller.signal
       }).catch(err => {
         clearTimeout(timeoutId);
@@ -192,6 +196,8 @@ export default function MobileDashboard() {
         const mainResult = {
           source: data.source,
           lyrics: data.lyrics,
+          artist: data.artist,
+          title: data.title,
           confidence: data.confidence,
           hasTimestamps: data.hasTimestamps,
           metadata: data.metadata
@@ -407,7 +413,7 @@ export default function MobileDashboard() {
     searchSessionRef.current++;
     setIsSearching(false);
     const song = {
-      title: result.title || searchQuery.split(' - ')[1] || '',
+      title: result.title || searchQuery.split(' - ')[1] || searchQuery || '',
       artist: result.artist || searchQuery.split(' - ')[0] || '',
       album: '',
       coverUrl: '',
@@ -429,8 +435,54 @@ export default function MobileDashboard() {
     
     toast.success(`🎵 ${result.source || 'Smart Scraper'}에서 가사를 찾았습니다! 이후 도착하는 결과는 무시됩니다.`);
     
-    // Auto fetch album info
-    fetchAlbumInfo(song.artist, song.title);
+    // Auto fetch metadata from new API first
+    console.log('📀 Fetching metadata for:', song.artist, '-', song.title);
+    try {
+      const metaResponse = await fetch('/api/metadata/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          artist: result.metadata?.artist || song.artist,
+          title: result.metadata?.title || song.title
+        })
+      });
+      console.log('📀 Metadata API response status:', metaResponse.status);
+      
+      if (metaResponse.ok) {
+        const metaData = await metaResponse.json();
+        if (metaData.success && metaData.metadata) {
+          const meta = metaData.metadata;
+          
+          // Update current song with metadata
+          setCurrentSong(prev => ({
+            ...prev,
+            artist: meta.artistDisplay || prev.artist,
+            title: meta.titleDisplay || prev.title,
+            album: meta.album || prev.album,
+            coverUrl: meta.albumCover || prev.coverUrl
+          }));
+          
+          // Update localStorage
+          if (meta.artistDisplay) localStorage.setItem('current_artist', meta.artistDisplay);
+          if (meta.titleDisplay) localStorage.setItem('current_title', meta.titleDisplay);
+          if (meta.album) localStorage.setItem('current_album', meta.album);
+          if (meta.albumCover) localStorage.setItem('current_cover_url', meta.albumCover);
+          
+          console.log('📀 Metadata fetched successfully:', meta);
+          toast.success('📀 앨범 정보를 가져왔습니다!');
+        } else {
+          // Fallback to existing album fetch if metadata API fails
+          fetchAlbumInfo(song.artist, song.title);
+        }
+      } else {
+        // Fallback to existing album fetch if metadata API fails
+        fetchAlbumInfo(song.artist, song.title);
+      }
+    } catch (error) {
+      console.error('Metadata fetch failed:', error);
+      // Fallback to existing album fetch
+      fetchAlbumInfo(song.artist, song.title);
+    }
     
     // Auto translate if translation is enabled
     const translationEnabled = localStorage.getItem('translation_enabled') === 'true';

@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       OPENAI_API_KEY = (await getSecret('openai')) || process.env.OPENAI_API_KEY || '';
       GOOGLE_API_KEY = (await getSecret('google')) || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
     }
-    const { lines, targetLanguage, context, task } = await request.json();
+    const { lines, targetLanguage, context, task, engine } = await request.json();
     
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
       return NextResponse.json(
@@ -84,13 +84,40 @@ export async function POST(request: NextRequest) {
     
     const targetLang = languageMap[targetLanguage] || targetLanguage;
     const isPronounce = String(task || '').toLowerCase() === 'pronounce';
-    const hasGroq = false; // archived as primary
-    const hasOpenAI = !!OPENAI_API_KEY; // primary gpt-5
-    const hasGoogle = !!GOOGLE_API_KEY; // only for backup (v2) or gemini fallback
+    const hasGroq = !!GROQ_API_KEY;
+    const hasOpenAI = !!OPENAI_API_KEY;
+    const hasGoogle = !!GOOGLE_API_KEY;
     
-    // Try OpenAI gpt-5 first for translation (not pronounce)
+    // If engine is specified, try that first
+    if (engine === 'groq' && hasGroq && !isPronounce) {
+      try {
+        // Call the new Groq translation API
+        const groqResponse = await fetch(`${request.url.replace('/batch', '/groq')}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lines, targetLanguage, context })
+        });
+        
+        if (groqResponse.ok) {
+          const groqData = await groqResponse.json();
+          if (groqData.success) {
+            overallTimer.success('Groq translation successful');
+            logger.summary(1, 1, Date.now() - overallStart);
+            return NextResponse.json({
+              success: true,
+              translations: groqData.translations,
+              source: 'groq'
+            });
+          }
+        }
+      } catch (error) {
+        logger.warning('Groq translation failed, falling back to other engines');
+      }
+    }
+    
+    // Default behavior: Try OpenAI gpt-5 first for translation (not pronounce)
     try {
-      if (!hasOpenAI || isPronounce) throw new Error('Skip OpenAI');
+      if (!hasOpenAI || isPronounce || engine === 'groq') throw new Error('Skip OpenAI');
       logger.api('OpenAI Translate', 'start', `Target=${targetLang} Lines=${lines.length}`);
       const OPENAI_MODEL = 'gpt-5';
       const response = await fetch('https://api.openai.com/v1/chat/completions', {

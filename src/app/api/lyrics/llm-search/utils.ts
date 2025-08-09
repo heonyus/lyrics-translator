@@ -28,7 +28,34 @@ async function searchWithClaude(artist: string, title: string): Promise<any | nu
             content: [
               {
                 type: 'text',
-                text: `Find the complete lyrics for "${title}" by "${artist}".\n\nReturn the response in this JSON format:\n{\n  "artist": "${artist}",\n  "title": "${title}",\n  "lyrics": "complete lyrics with \\n for line breaks",\n  "language": "ko/en/ja/etc",\n  "hasLyrics": true/false\n}\n\nIf you cannot find the lyrics, set hasLyrics to false.`
+                text: `Find complete song lyrics with accurate metadata.
+
+## CHAIN OF THOUGHT:
+1. Identify exact artist and title
+2. Find complete lyrics (all verses, not snippets)
+3. Extract album information if available
+4. Return structured JSON
+
+## SEARCH QUERY:
+Artist: "${artist}"
+Title: "${title}"
+
+## OUTPUT FORMAT (strict JSON):
+{
+  "artist": "exact artist name",
+  "title": "exact song title",
+  "album": "album name if known",
+  "lyrics": "complete lyrics with \\n for line breaks",
+  "language": "ko/en/ja/etc",
+  "hasLyrics": true/false,
+  "confidence": 0.0-1.0
+}
+
+## REQUIREMENTS:
+- Return COMPLETE lyrics (all verses, choruses, bridges)
+- Set hasLyrics to false if not found
+- Include confidence score (0.0-1.0)
+- Preserve original formatting with line breaks`
               }
             ]
           }
@@ -96,11 +123,33 @@ async function searchWithGPT(artist: string, title: string): Promise<any | null>
         messages: [
           {
             role: 'system',
-            content: 'Find complete song lyrics. Return JSON with artist, title, lyrics, language, hasLyrics fields.'
+            content: `Find complete song lyrics with accurate metadata.
+
+## CHAIN OF THOUGHT:
+1. Parse artist and title accurately
+2. Search for complete lyrics (all verses)
+3. Extract album information if available
+4. Return structured JSON
+
+## OUTPUT FORMAT (strict JSON):
+{
+  "artist": "exact artist name",
+  "title": "exact song title",
+  "album": "album name if known",
+  "lyrics": "complete lyrics with line breaks",
+  "language": "language code",
+  "hasLyrics": true/false,
+  "confidence": 0.0-1.0
+}
+
+## CRITICAL RULES:
+- Return COMPLETE lyrics, not just first verse
+- Include proper line breaks (\\n)
+- Set hasLyrics to false if lyrics not found`
           },
           {
             role: 'user',
-            content: `Find lyrics for "${title}" by "${artist}"`
+            content: `Find the complete lyrics for "${title}" by "${artist}". Return as valid JSON with all metadata including album name if known.`
           }
         ],
         temperature: 0.1,
@@ -184,11 +233,47 @@ async function searchWithGroq(artist: string, title: string): Promise<any | null
         messages: [
           {
             role: 'system',
-            content: 'Find complete song lyrics. Return JSON with artist, title, lyrics, language, hasLyrics fields.'
+            content: `Find complete song lyrics with accurate metadata.
+
+## CHAIN OF THOUGHT PROCESS:
+1. Parse and identify the exact artist and title
+2. Search for the complete lyrics (all verses, not snippets)
+3. Extract any available album information
+4. Validate the completeness of lyrics
+5. Return structured JSON with all information
+
+## OUTPUT FORMAT (strict JSON):
+{
+  "artist": "exact artist name",
+  "title": "exact song title",
+  "album": "album name if known",
+  "lyrics": "complete lyrics with line breaks",
+  "language": "detected language code (ko/en/ja/zh/etc)",
+  "hasLyrics": true/false,
+  "confidence": 0.0-1.0
+}
+
+## FEW-SHOT EXAMPLE:
+Query: "폴킴 커피"
+Output: {
+  "artist": "폴킴",
+  "title": "커피 한잔할래요",
+  "album": "녹색의 계절",
+  "lyrics": "Breeze\n가벼운 바람이 깨우는 Oh breeze\n너의 생각으로 시작하는\nMy everyday\n\nBreath\n뭔가 좋은 일이 생길 것 같은\n절로 콧노래가 흘러나오는\n그런 상상을 하게 해...",
+  "language": "ko",
+  "hasLyrics": true,
+  "confidence": 0.95
+}
+
+## CRITICAL RULES:
+- Return COMPLETE lyrics, not just first verse
+- Include proper line breaks (\\n) for formatting
+- Set hasLyrics to false if lyrics not found
+- Confidence reflects how certain you are about the accuracy`
           },
           {
             role: 'user',
-            content: `Find the complete lyrics for "${title}" by "${artist}"`
+            content: `Find the complete lyrics for "${title}" by "${artist}". Return as valid JSON.`
           }
         ],
         temperature: 0.1,

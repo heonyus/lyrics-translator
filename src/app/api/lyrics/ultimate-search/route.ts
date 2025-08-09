@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
 import { getSecret } from '@/lib/secure-secrets';
+import { searchEngine } from '../search-engine/utils';
 // Simplified multilingual display formatting
 async function formatMultilingualDisplay(artist: string, title: string) {
   // For now, just return the original values
@@ -50,11 +51,47 @@ interface SearchStrategy {
   priority: number;
 }
 
+// AI 메타 텍스트 감지 함수
+function detectAIMetaText(text: string): boolean {
+  // AI가 생성한 설명/안내 텍스트 패턴
+  const aiPatterns = [
+    /I cannot access/i,
+    /I don't have.*real-time/i,
+    /real-time web content/i,
+    /search directly/i,
+    /I'd recommend/i,
+    /To find.*lyrics/i,
+    /actual current URLs/i,
+    /I cannot provide/i,
+    /I'm unable to/i,
+    /please check/i,
+    /you can search/i,
+    /visit.*website/i,
+    /try searching/i
+  ];
+  
+  // 패턴 매치 확인
+  const hasAIPattern = aiPatterns.some(pattern => pattern.test(text));
+  
+  // 추가 휴리스틱: "I", "you" 등 대화체가 많으면 AI 텍스트
+  const conversationalWords = (text.match(/\b(I|you|your|we|our|please|would|could|should)\b/gi) || []).length;
+  const totalWords = text.split(/\s+/).length;
+  const conversationalRatio = conversationalWords / Math.max(totalWords, 1);
+  
+  return hasAIPattern || conversationalRatio > 0.1;
+}
+
 // Enhanced quality validation - 완전한 가사인지 엄격하게 검증
 function validateLyrics(lyrics: string, strict: boolean = true): boolean {
   if (!lyrics || lyrics.length < 200) return false;
   if (lyrics.includes('404') || lyrics.includes('not found')) return false;
   if (lyrics.includes('<html') || lyrics.includes('<!DOCTYPE')) return false;
+  
+  // AI 메타 텍스트면 즉시 거부
+  if (detectAIMetaText(lyrics)) {
+    console.log(`⚠️ AI meta text detected, rejecting`);
+    return false;
+  }
   
   // Check for actual lyric patterns
   const lines = lyrics.split('\n').filter(l => l.trim());
@@ -62,7 +99,21 @@ function validateLyrics(lyrics: string, strict: boolean = true): boolean {
   
   // Strict validation for completeness
   if (strict) {
-    // 최소 400자 이상 (완전한 가사) - 완화
+    // 한국 노래인 경우 더 관대한 기준 적용
+    const isKorean = /[가-힣]/.test(lyrics);
+    
+    if (isKorean) {
+      // 한국 노래는 300자 이상이면 통과 (많은 한국 노래가 짧음)
+      if (lyrics.length < 300) {
+        console.log(`⚠️ Korean lyrics too short: ${lyrics.length} chars`);
+        return false;
+      }
+      // 한국 노래는 구조 체크 안함 (발라드 등은 단순 구조)
+      console.log(`✅ Korean lyrics validated: ${lyrics.length} chars`);
+      return true;
+    }
+    
+    // 영어/기타 노래는 기존 기준
     if (lyrics.length < 400) {
       console.log(`⚠️ Lyrics too short: ${lyrics.length} chars`);
       return false;
@@ -70,31 +121,15 @@ function validateLyrics(lyrics: string, strict: boolean = true): boolean {
     
     // 구조 확인 - 여러 절이 있는지
     const hasMultipleVerses = 
-      (lyrics.includes('2절') || lyrics.includes('Verse 2') || lyrics.includes('[Verse 2]')) ||
+      (lyrics.includes('Verse 2') || lyrics.includes('[Verse 2]')) ||
       (lyrics.includes('Chorus') && lyrics.split('Chorus').length > 2) ||
-      (lyrics.includes('후렴') && lyrics.split('후렴').length > 2) ||
       (lines.length > 20); // 최소 20줄 이상
     
-    // 반복 구조 감지 - 1절만 있으면 거부 (더 완화)
+    // 반복 구조 감지
     const paragraphs = lyrics.split('\n\n').filter(p => p.trim().length > 20);
-    // 충분히 긴 가사면 통과
     if (paragraphs.length < 2 && lyrics.length < 600) {
       console.log(`⚠️ Not enough paragraphs: ${paragraphs.length}`);
       return false;
-    }
-    
-    // 한국 노래인 경우 특별 체크
-    const isKorean = /[가-힣]/.test(lyrics);
-    if (isKorean) {
-      // 한국 노래는 보통 2절 구조 - 완화된 검증
-      const hasSecondVerse = lyrics.includes('2절') || 
-                             paragraphs.length >= 3 ||
-                             lyrics.length > 600;
-      // Bugs에서 온 가사는 믿고 통과
-      if (!hasSecondVerse && !lyrics.includes('오빠가 좋은걸')) {
-        console.log(`⚠️ Korean song seems incomplete`);
-        return false;
-      }
     }
   }
   
@@ -186,13 +221,35 @@ async function searchLRCLIB(artist: string, title: string): Promise<SearchResult
   return null;
 }
 
+// Search Engine with Perplexity + Groq
+async function searchWithEngine(artist: string, title: string): Promise<SearchResult | null> {
+  const timer = new APITimer('Search Engine');
+  try {
+    const result = await searchEngine({ artist, title });
+    if (result.success && result.result) {
+      timer.success(`Found lyrics from ${result.result.source}`);
+      return {
+        source: result.result.source,
+        lyrics: result.result.lyrics,
+        confidence: result.result.confidence || 0.85,
+        hasTimestamps: false,
+        metadata: result.result
+      };
+    }
+    timer.skip('No results');
+  } catch (error) {
+    timer.fail(error instanceof Error ? error.message : 'Unknown error');
+  }
+  return null;
+}
+
 // Perplexity Pro Search (Latest model)
 async function searchPerplexityPro(artist: string, title: string): Promise<SearchResult | null> {
   const timer = new APITimer('Perplexity Pro');
   console.log(`[Perplexity] Starting search for: ${artist} - ${title}`);
   
   try {
-    const apiKey = await getSecret('perplexity', 'api_key');
+    const apiKey = await getSecret('perplexity') || process.env.PERPLEXITY_API_KEY;
     console.log(`[Perplexity] API Key exists: ${!!apiKey}`);
     logger.debug(`[Perplexity] API Key exists: ${!!apiKey}`);
     
@@ -204,16 +261,16 @@ async function searchPerplexityPro(artist: string, title: string): Promise<Searc
     
     const { artistDisplay, titleDisplay } = await formatMultilingualDisplay(artist, title);
     
-    const prompt = `Find the best lyrics pages/URLs for the song "${titleDisplay}" by "${artistDisplay}".
+    const prompt = `Find actual lyrics websites for "${titleDisplay}" by "${artistDisplay}".
 
-Requirements:
-- Find and list URLs of pages that contain the full lyrics
-- Prioritize official sites, music databases, and lyric sites
-- Include Korean sites like Melon, Bugs, Genie if it's a Korean song
-- Include sites like Genius, AZLyrics, LyricFind for international songs
-- Return the URLs and brief descriptions
-
-Output: List the URLs found with their site names.`;
+IMPORTANT REQUIREMENTS:
+- EXCLUDE: YouTube, Spotify, Apple Music, SoundCloud, video/streaming sites
+- ONLY include dedicated lyrics websites with full text lyrics
+- Priority sites: Genius.com, AZLyrics.com, Lyrics.com, Musixmatch.com
+- Korean: Bugs.co.kr/track/*, Melon.com, Genie.co.kr, ColorCodedLyrics.com
+- Japanese: Uta-net.com, Utaten.com, J-Lyric.net
+- Return ONLY direct lyrics page URLs (not search results)
+- Format: One URL per line, no descriptions or markdown`;
     
     // Use sonar-reasoning-pro for better results
     const requestBody = {
@@ -456,23 +513,25 @@ ${cleanedHtml}`
               const groqData = await groqResponse.json();
               const extractedLyrics = groqData.choices?.[0]?.message?.content || '';
               
-              if (extractedLyrics && extractedLyrics.length > 100) {
-                console.log(`[Perplexity] Successfully extracted lyrics from URL: ${extractedLyrics.length} chars`);
+              if (extractedLyrics && extractedLyrics !== 'NO_LYRICS_FOUND' && extractedLyrics.length > 100) {
+                console.log(`[Perplexity] Successfully extracted lyrics from ${result.url}: ${extractedLyrics.length} chars`);
                 timer.success(`Extracted from URL (${extractedLyrics.length} chars)`);
                 return {
-                  source: `perplexity-scraped-${new URL(nonYtUrls[0].url).hostname}`,
+                  source: `perplexity-scraped-${new URL(result.url).hostname}`,
                   lyrics: extractedLyrics,
-                  confidence: 0.75,
+                  confidence: 0.85,
                   hasTimestamps: false,
                   metadata: {
                     citations,
                     searchResults,
-                    scrapedFrom: nonYtUrls[0].url
+                    scrapedFrom: result.url
                   }
                 };
+              } else {
+                console.log(`[Perplexity] No valid lyrics found in ${result.url}`);
               }
             } catch (scrapeError) {
-              console.error('[Perplexity] Failed to scrape URL:', scrapeError);
+              console.error(`[Perplexity] Failed to scrape ${result.url}:`, scrapeError);
             }
           }
           
@@ -509,7 +568,7 @@ ${cleanedHtml}`
 async function searchClaude35(artist: string, title: string): Promise<SearchResult | null> {
   const timer = new APITimer('Claude 3.5');
   try {
-    const apiKey = await getSecret('anthropic', 'api_key');
+    const apiKey = await getSecret('anthropic') || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
     logger.debug(`[Claude] API Key exists: ${!!apiKey}`);
     if (!apiKey) {
       timer.skip('No API key');
@@ -581,7 +640,7 @@ If you know this song, provide the complete lyrics. If not, clearly state that.`
 async function searchGPT5(artist: string, title: string): Promise<SearchResult | null> {
   const timer = new APITimer('GPT-5');
   try {
-    const apiKey = await getSecret('openai', 'api_key');
+    const apiKey = await getSecret('openai') || process.env.OPENAI_API_KEY;
     logger.debug(`[GPT] API Key exists: ${!!apiKey}`);
     if (!apiKey) {
       timer.skip('No API key');
@@ -666,7 +725,7 @@ Return only the lyrics text.`;
 async function searchGemini15(artist: string, title: string): Promise<SearchResult | null> {
   const timer = new APITimer('Gemini 1.5');
   try {
-    const apiKey = await getSecret('google', 'api_key');
+    const apiKey = await getSecret('google') || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
     logger.debug(`[Gemini] API Key exists: ${!!apiKey}`);
     if (!apiKey) {
       timer.skip('No API key');
@@ -699,7 +758,7 @@ If you cannot find the lyrics, say "Lyrics not found".`;
     logger.debug(`[Gemini] Request:`, requestBody);
     
     // Try different Gemini models
-    const models = ['gemini-2.5-pro-latest', 'gemini-2.0-pro', 'gemini-1.5-pro-latest']; // Latest Gemini 2.5 (user specified)
+    const models = ['gemini-2.0-flash-exp', 'gemini-exp-1206', 'gemini-1.5-flash-latest']; // Use working Gemini models
     
     for (const model of models) {
       logger.debug(`[Gemini] Trying model: ${model}`);
@@ -887,20 +946,31 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
   const strategies: SearchStrategy[] = [
     { name: 'LRCLIB', search: searchLRCLIB, priority: 10 },
     { name: 'Korean Sites', search: searchKoreanSites, priority: 9 },
-    { name: 'Perplexity Pro', search: searchPerplexityPro, priority: 8 },
-    { name: 'GPT-5', search: searchGPT5, priority: 7 },
-    { name: 'Claude 3.5', search: searchClaude35, priority: 6 },
-    { name: 'Gemini 1.5', search: searchGemini15, priority: 5 },
+    { name: 'Search Engine', search: searchWithEngine, priority: 8 },
+    { name: 'Perplexity Pro', search: searchPerplexityPro, priority: 7 },
+    { name: 'GPT-5', search: searchGPT5, priority: 6 },
+    { name: 'Claude 3.5', search: searchClaude35, priority: 5 },
+    { name: 'Gemini 1.5', search: searchGemini15, priority: 4 },
   ];
   
   console.log(`Running ${strategies.length} search strategies...`);
   
-  // Execute all searches in parallel WITH TIMEOUT
-  const searchPromises = strategies.map(async (strategy) => {
+  // Group strategies by priority for controlled execution
+  const priorityGroups = {
+    high: strategies.filter(s => s.priority >= 8),     // LRCLIB, Korean, Search Engine
+    medium: strategies.filter(s => s.priority >= 6 && s.priority < 8), // Perplexity, GPT
+    low: strategies.filter(s => s.priority < 6)        // Claude, Gemini
+  };
+  
+  const allResults: (SearchResult & { priority: number })[] = [];
+  
+  // Execute high priority group first (fast, reliable sources)
+  console.log(`
+🚀 Executing HIGH priority group (${priorityGroups.high.length} strategies)...`);
+  const highPromises = priorityGroups.high.map(async (strategy) => {
     console.log(`Starting ${strategy.name} search...`);
     try {
-      // Different timeout for different strategies
-      const timeoutMs = strategy.name === 'Perplexity Pro' ? 25000 : 5000; // 25s for Perplexity Pro
+      const timeoutMs = strategy.name === 'Search Engine' ? 60000 : 5000; // 60s for Search Engine to allow Perplexity + Groq
       const result = await runWithTimeout(
         strategy.search(artist, title),
         timeoutMs,
@@ -921,24 +991,105 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
     return null;
   });
   
-  // Wait for all searches with overall timeout
-  const allSearchesPromise = Promise.allSettled(searchPromises);
-  const timeoutPromise = new Promise<PromiseSettledResult<any>[]>((resolve) => 
-    setTimeout(() => {
-      console.log('⚠️ Overall search timeout reached (30s)');
-      resolve([]);
-    }, 30000) // Increased to 30s to accommodate Perplexity Pro
-  );
+  const highResults = await Promise.allSettled(highPromises);
+  highResults.forEach(r => {
+    if (r.status === 'fulfilled' && r.value) {
+      allResults.push(r.value);
+    }
+  });
   
-  const results = await Promise.race([allSearchesPromise, timeoutPromise]) || [];
+  // Only skip other groups if we have REALLY good results
+  const hasExcellentResult = allResults.some(r => r.lyrics.length > 1000 && r.confidence > 0.9);
   
-  console.log(`Search promises completed: ${results.length} results`);
+  // Always try medium priority unless we have excellent results
+  if (!hasExcellentResult) {
+    // Execute medium priority group
+    console.log(`
+⚡ Executing MEDIUM priority group (${priorityGroups.medium.length} strategies)...`);
+    
+    // Add delay to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const mediumPromises = priorityGroups.medium.map(async (strategy) => {
+      console.log(`Starting ${strategy.name} search...`);
+      try {
+        const timeoutMs = strategy.name === 'Perplexity Pro' ? 25000 : 10000;
+        const result = await runWithTimeout(
+          strategy.search(artist, title),
+          timeoutMs,
+          strategy.name
+        );
+        
+        if (result) {
+          console.log(`✅ ${strategy.name} SUCCESS: ${result.lyrics.length} chars`);
+          logger.result(result.source, result.confidence, result.lyrics.length);
+          return { ...result, priority: strategy.priority };
+        } else {
+          console.log(`⏭️ ${strategy.name} SKIP: No results`);
+        }
+      } catch (error) {
+        console.error(`❌ ${strategy.name} FAILED:`, error);
+        logger.error(`${strategy.name} search failed`, error);
+      }
+      return null;
+    });
+    
+    const mediumResults = await Promise.allSettled(mediumPromises);
+    mediumResults.forEach(r => {
+      if (r.status === 'fulfilled' && r.value) {
+        allResults.push(r.value);
+      }
+    });
+  }
   
-  // Filter successful results
-  const successful = results
-    .filter((r): r is PromiseFulfilledResult<SearchResult & { priority: number } | null> => 
-      r.status === 'fulfilled' && r.value !== null)
-    .map(r => r.value!)
+  // Run low priority to get more sources for comparison
+  const hasEnoughSources = allResults.filter(r => r.lyrics.length > 400).length >= 3;
+  
+  if (!hasEnoughSources) {
+    console.log(`
+🔍 Executing LOW priority group (${priorityGroups.low.length} strategies)...`);
+    
+    // Add delay to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const lowPromises = priorityGroups.low.map(async (strategy) => {
+      console.log(`Starting ${strategy.name} search...`);
+      try {
+        const timeoutMs = 10000;
+        const result = await runWithTimeout(
+          strategy.search(artist, title),
+          timeoutMs,
+          strategy.name
+        );
+        
+        if (result) {
+          console.log(`✅ ${strategy.name} SUCCESS: ${result.lyrics.length} chars`);
+          logger.result(result.source, result.confidence, result.lyrics.length);
+          return { ...result, priority: strategy.priority };
+        } else {
+          console.log(`⏭️ ${strategy.name} SKIP: No results`);
+        }
+      } catch (error) {
+        console.error(`❌ ${strategy.name} FAILED:`, error);
+        logger.error(`${strategy.name} search failed`, error);
+      }
+      return null;
+    });
+    
+    const lowResults = await Promise.allSettled(lowPromises);
+    lowResults.forEach(r => {
+      if (r.status === 'fulfilled' && r.value) {
+        allResults.push(r.value);
+      }
+    });
+  }
+  
+  console.log(`
+📊 Total results collected: ${allResults.length}`);
+  
+  // Sort results by quality
+  const successful = allResults
+    .filter(r => r !== null)
     .sort((a, b) => {
       // Sort by: hasTimestamps first, then confidence, then priority
       if (a.hasTimestamps !== b.hasTimestamps) {
@@ -951,6 +1102,10 @@ async function ultimateSearch(artist: string, title: string): Promise<SearchResu
     });
   
   console.log(`Successful results: ${successful.length}`);
+  
+  // No need for Promise.race since we're already handling timeouts in groups
+  
+  console.log(`Successful results after all groups: ${successful.length}`);
   
   // Summary of search results
   const searchStartTime = Date.now() - 3000; // Approximate time
@@ -978,22 +1133,65 @@ export async function POST(req: NextRequest) {
   
   try {
     const body = await req.json();
-    const { artist, title } = body;
+    const { query, artist: providedArtist, title: providedTitle } = body;
+    
+    // IMMEDIATE CONSOLE LOG - DO NOT REMOVE
+    console.log('Request body:', JSON.stringify(body));
+    
+    // Parse query if needed
+    let artist = providedArtist;
+    let title = providedTitle;
+    
+    if (!artist || !title) {
+      if (query) {
+        console.log(`🔍 Parsing query: "${query}"`);
+        try {
+          // Call parse-query API
+          const parseResponse = await fetch(`${req.url.replace('/ultimate-search', '/parse-query')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+          });
+          
+          if (parseResponse.ok) {
+            const parseData = await parseResponse.json();
+            if (parseData.success && parseData.parsed) {
+              artist = parseData.parsed.artist || '';
+              title = parseData.parsed.title || query;
+              console.log(`✅ Parsed: Artist="${artist}" Title="${title}"`);
+            } else {
+              // Fallback parsing
+              const parts = query.split(/[-–—]/).map(p => p.trim());
+              if (parts.length === 2) {
+                artist = parts[0];
+                title = parts[1];
+              } else {
+                artist = '';
+                title = query;
+              }
+              console.log(`⚠️ Fallback parse: Artist="${artist}" Title="${title}"`);
+            }
+          }
+        } catch (parseError) {
+          console.error('Parse error:', parseError);
+          // Simple fallback
+          artist = '';
+          title = query;
+        }
+      } else {
+        console.error('ERROR: No query, artist, or title provided');
+        return NextResponse.json(
+          { error: 'Either query or artist+title are required' },
+          { status: 400 }
+        );
+      }
+    }
     
     // IMMEDIATE CONSOLE LOG - DO NOT REMOVE
     console.log(`Search Request: ${artist} - ${title}`);
-    console.log('Request body:', JSON.stringify(body));
     
     logger.info(`[Ultimate Search API] Request received`);
     logger.info(`[Ultimate Search API] Searching for: ${artist} - ${title}`);
-    
-    if (!artist || !title) {
-      console.error('ERROR: Missing artist or title');
-      return NextResponse.json(
-        { error: 'Artist and title are required' },
-        { status: 400 }
-      );
-    }
     
     // Try exact match first with timeout
     console.log('\nPhase 1: Exact match search...');
@@ -1051,8 +1249,81 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    // Use intelligent selection/merging
-    const bestCandidate = selectBestLyrics(results);
+    // 가사 검증 및 AI 텍스트 필터링
+    const verifiedResults = await Promise.all(
+      results.map(async (result) => {
+        // AI 메타 텍스트 감지
+        if (detectAIMetaText(result.lyrics)) {
+          console.log(`⚠️ [Ultimate] AI meta text detected in ${result.source}, rejecting`);
+          return { ...result, rejected: true, reason: 'AI meta text' };
+        }
+        
+        // LLM 검증 (옵션)
+        try {
+          const verifyResponse = await fetch(`${req.url.replace('/ultimate-search', '/verify')}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              artist,
+              title,
+              lyrics: result.lyrics
+            })
+          });
+          
+          if (verifyResponse.ok) {
+            const verifyData = await verifyResponse.json();
+            if (verifyData.success && verifyData.verification) {
+              const { isCorrect, confidence, isAIText } = verifyData.verification;
+              
+              if (isAIText) {
+                console.log(`⚠️ [Ultimate] LLM detected AI text in ${result.source}`);
+                return { ...result, rejected: true, reason: 'LLM detected AI text' };
+              }
+              
+              return {
+                ...result,
+                verified: isCorrect,
+                verifyConfidence: confidence
+              };
+            }
+          }
+        } catch (verifyError) {
+          console.log(`⚠️ [Ultimate] Verification failed for ${result.source}`);
+        }
+        
+        return result;
+      })
+    );
+    
+    // 거부된 결과 제외
+    const validResults = verifiedResults.filter(r => !r.rejected);
+    
+    if (validResults.length === 0) {
+      return NextResponse.json(
+        { error: 'All results were AI-generated text' },
+        { status: 404 }
+      );
+    }
+    
+    // 우선순위 기반 선택
+    const sortedResults = validResults.sort((a, b) => {
+      // 1. 한국 사이트 우선 (Bugs, Melon)
+      const aKorean = ['bugs', 'melon', 'genie'].some(site => a.source.includes(site));
+      const bKorean = ['bugs', 'melon', 'genie'].some(site => b.source.includes(site));
+      if (aKorean !== bKorean) return aKorean ? -1 : 1;
+      
+      // 2. 검증 성공 우선
+      if (a.verified !== undefined && b.verified !== undefined) {
+        if (a.verified !== b.verified) return a.verified ? -1 : 1;
+      }
+      
+      // 3. 신뢰도 순
+      const aConf = a.verifyConfidence || a.confidence;
+      const bConf = b.verifyConfidence || b.confidence;
+      return bConf - aConf;
+    });
+    
+    const bestCandidate = sortedResults[0];
     
     if (!bestCandidate) {
       return NextResponse.json(
@@ -1089,6 +1360,8 @@ export async function POST(req: NextRequest) {
     
     const response = {
       lyrics: formattedLyrics,
+      artist: artist || bestCandidate.metadata?.artist || '',
+      title: title || bestCandidate.metadata?.title || '',
       source: bestCandidate.source,
       confidence: bestCandidate.confidence,
       hasTimestamps: bestCandidate.hasTimestamps,

@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger, APITimer } from '@/lib/logger';
 
+let GROQ_API_KEY: string | undefined;
+let CLAUDE_API_KEY: string | undefined;
+let OPENAI_API_KEY: string | undefined;
+
+async function loadKeys() {
+  if (typeof window !== 'undefined') return;
+  const { getSecret } = await import('@/lib/secure-secrets');
+  GROQ_API_KEY = (await getSecret('groq')) || process.env.GROQ_API_KEY;
+  CLAUDE_API_KEY = (await getSecret('claude')) || process.env.CLAUDE_API_KEY;
+  OPENAI_API_KEY = (await getSecret('openai')) || process.env.OPENAI_API_KEY;
+}
+
 // Parse with Groq (fastest)
 async function parseWithGroq(query: string): Promise<any | null> {
-  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  await loadKeys();
   
   if (!GROQ_API_KEY) {
     return null;
@@ -19,21 +31,64 @@ async function parseWithGroq(query: string): Promise<any | null> {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
+        model: 'llama-3.3-70b-versatile',
         messages: [
           {
             role: 'system',
-            content: `You are a music query parser. Parse the user's search query and extract the artist and song title.
-            
-Examples:
-- "백예린 스퀘어" → {"artist": "백예린", "title": "스퀘어"}
-- "스퀘어 백예린" → {"artist": "백예린", "title": "스퀘어"}  
-- "Square by Yerin Baek" → {"artist": "Yerin Baek", "title": "Square"}
-- "백예린의 Square" → {"artist": "백예린", "title": "Square"}
-- "아이유 좋은날" → {"artist": "아이유", "title": "좋은날"}
-- "Blueming IU" → {"artist": "IU", "title": "Blueming"}
+            content: `You are an expert music query parser with extensive knowledge of global music artists.
 
-Return ONLY JSON with artist and title fields. Keep original language.`
+## MUSIC DOMAIN CONTEXT:
+- In Korean/Asian music searches, users type: [ARTIST_NAME] [SONG_TITLE]
+- Korean artist names are typically 2-4 characters
+- The FIRST word is usually the artist name
+- Spaces are SEPARATORS, not grammatical particles
+
+## YOUR MUSIC KNOWLEDGE:
+- "아이유" (IU) - Famous Korean solo artist
+- "폴킴" (Paul Kim) - Korean R&B singer
+- "백예린" (Yerin Baek) - Korean indie artist
+- "악동뮤지션" (AKMU) - Korean duo
+- BTS, BLACKPINK - K-pop groups
+
+## CHAIN OF THOUGHT (internal process, don't output):
+1. Check if first word matches known artist from your training
+2. If yes, first word = artist, rest = title
+3. If unclear, check common patterns
+4. Verify: Is the parsed artist likely an artist name?
+5. Return clean JSON
+
+## FEW-SHOT EXAMPLES:
+
+Korean patterns (from your knowledge):
+- "아이유 복숭아" → {"artist": "아이유", "title": "복숭아"} // IU is a known artist
+- "폴킴 비" → {"artist": "폴킴", "title": "비"} // Paul Kim is a known artist
+- "폴킴 커피한잔할래요" → {"artist": "폴킴", "title": "커피한잔할래요"}
+- "백예린 스퀘어" → {"artist": "백예린", "title": "스퀘어"}
+- "아이유 좋은날" → {"artist": "아이유", "title": "좋은날"}
+- "악동뮤지션 오랜날오랜밤" → {"artist": "악동뮤지션", "title": "오랜날오랜밤"}
+- "스퀘어 백예린" → {"artist": "백예린", "title": "스퀘어"}  
+- "아이유의 좋은날" → {"artist": "아이유", "title": "좋은날"}
+- "너의 의미 아이유" → {"artist": "아이유", "title": "너의 의미"}
+- "BTS 의 Dynamite" → {"artist": "BTS", "title": "Dynamite"}
+
+English patterns:
+- "Ed Sheeran - Perfect" → {"artist": "Ed Sheeran", "title": "Perfect"}
+- "Perfect by Ed Sheeran" → {"artist": "Ed Sheeran", "title": "Perfect"}
+- "Taylor Swift Blank Space" → {"artist": "Taylor Swift", "title": "Blank Space"}
+
+Japanese patterns:
+- "米津玄師 Lemon" → {"artist": "米津玄師", "title": "Lemon"}
+- "YOASOBI 夜に駆ける" → {"artist": "YOASOBI", "title": "夜に駆ける"}
+
+Single word/unclear:
+- "Yesterday" → {"artist": null, "title": "Yesterday"}
+- "봄날" → {"artist": null, "title": "봄날"}
+
+## RULES:
+- Return ONLY JSON format
+- Use null if artist cannot be determined
+- Keep original language/capitalization
+- No explanations or additional text`
           },
           {
             role: 'user',
@@ -70,7 +125,7 @@ Return ONLY JSON with artist and title fields. Keep original language.`
 
 // Parse with Claude (backup)
 async function parseWithClaude(query: string): Promise<any | null> {
-  const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
+  await loadKeys();
   
   if (!CLAUDE_API_KEY) {
     return null;
@@ -140,7 +195,7 @@ Return JSON: {"artist": "...", "title": "..."}`
 
 // Parse with GPT (backup)
 async function parseWithGPT(query: string): Promise<any | null> {
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  await loadKeys();
   
   if (!OPENAI_API_KEY) {
     return null;
@@ -199,6 +254,17 @@ async function parseWithGPT(query: string): Promise<any | null> {
 function simpleParser(query: string): any {
   // Remove extra spaces
   query = query.trim().replace(/\s+/g, ' ');
+  
+  // Check for Korean artist name patterns (2-4 chars Korean name + title)
+  const koreanArtistPattern = /^([가-힣]{2,4})\s+(.+)$/;
+  const koreanMatch = query.match(koreanArtistPattern);
+  if (koreanMatch) {
+    // Common Korean artist names
+    const knownArtists = ['폴킴', '아이유', '백예린', '이무진', '멜로망스', '악동뮤지션', '박효신', '임영웅', '이소라', '윤하'];
+    if (knownArtists.includes(koreanMatch[1])) {
+      return { artist: koreanMatch[1], title: koreanMatch[2].trim() };
+    }
+  }
   
   // Common patterns
   const patterns = [
